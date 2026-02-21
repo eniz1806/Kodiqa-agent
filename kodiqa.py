@@ -303,20 +303,35 @@ class Kodiqa:
             self.console.print(f"Switched to [cyan]{self.model}[/] ({provider})")
         elif command == "/multi":
             if not arg:
-                self.console.print("[red]Usage: /multi coder qwen deepseek[/]")
+                self.console.print("[red]Usage: /multi coder qwen deepseek  or  /multi all[/]")
                 return
-            names = arg.split()
-            resolved = []
-            for name in names:
-                if name in CLAUDE_ALIASES:
-                    if not self.claude_key:
-                        self.console.print(f"[red]{name} needs Claude API key. Use /key to add one.[/]")
-                        return
-                    resolved.append(CLAUDE_ALIASES[name])
-                elif name in MODEL_ALIASES:
-                    resolved.append(MODEL_ALIASES[name])
-                else:
-                    resolved.append(name)
+            if arg.strip().lower() == "all":
+                # Auto-discover all installed Ollama models
+                resolved = []
+                try:
+                    resp = requests.get(f"{OLLAMA_URL}/api/tags", timeout=5)
+                    resp.raise_for_status()
+                    for m in resp.json().get("models", []):
+                        resolved.append(m["name"])
+                except Exception:
+                    self.console.print("[red]Can't reach Ollama to list models.[/]")
+                    return
+                if not resolved:
+                    self.console.print("[yellow]No Ollama models found.[/]")
+                    return
+            else:
+                names = arg.split()
+                resolved = []
+                for name in names:
+                    if name in CLAUDE_ALIASES:
+                        if not self.claude_key:
+                            self.console.print(f"[red]{name} needs Claude API key. Use /key to add one.[/]")
+                            return
+                        resolved.append(CLAUDE_ALIASES[name])
+                    elif name in MODEL_ALIASES:
+                        resolved.append(MODEL_ALIASES[name])
+                    else:
+                        resolved.append(name)
             self.multi_models = resolved
             names_str = ", ".join(f"[cyan]{m}[/]" for m in resolved)
             self.console.print(f"Multi-model mode: {names_str}")
