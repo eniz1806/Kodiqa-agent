@@ -52,11 +52,21 @@ class Kodiqa:
         self.settings = load_settings()
         self.claude_key = self.settings.get("claude_api_key", "")
         self.session_file = os.path.join(KODIQA_DIR, "session.json")
-        self.multi_models = []  # empty = single mode, list = multi mode
+        self.multi_models = self._discover_models()  # default: multi-model mode
         if self.claude_key:
             self.model = self.settings.get("default_model", "claude-sonnet-4-20250514")
         else:
             self.model = self.settings.get("default_model", DEFAULT_MODEL)
+
+    def _discover_models(self):
+        """Auto-discover all installed Ollama models for multi-mode default."""
+        try:
+            resp = requests.get(f"{OLLAMA_URL}/api/tags", timeout=5)
+            resp.raise_for_status()
+            models = [m["name"] for m in resp.json().get("models", [])]
+            return models if models else []
+        except Exception:
+            return []
 
     def run(self):
         self._first_run_setup()
@@ -241,10 +251,13 @@ class Kodiqa:
             git_line = f"\nGit: [cyan]{g['branch']}[/]"
             if g["changed_files"]:
                 git_line += f" ({g['changed_files']} changed files)"
+        mode_line = ""
+        if self.multi_models:
+            mode_line = f"\nMode: [magenta]Multi-model[/] ({len(self.multi_models)} models + consensus)"
         self.console.print(Panel(
             f"[bold green]Kodiqa[/] - AI Coding Agent\n"
-            f"Model: [cyan]{self.model}[/] ({provider}){git_line}\n"
-            f"Type [bold]/help[/] for commands, [bold]/quit[/] to exit",
+            f"Model: [cyan]{self.model}[/] ({provider}){git_line}{mode_line}\n"
+            f"Type [bold]/help[/] for commands, [bold]/single[/] for single model",
             border_style="green",
         ))
 
