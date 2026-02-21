@@ -265,9 +265,9 @@ class Kodiqa:
             claude_status = "[green]connected[/]" if self.claude_key else "[dim]not set[/]"
             self.console.print(Panel(
                 "[bold]/model <name>[/]  - Switch model\n"
-                "  [dim]Local: llama, qwen, coder, deepseek, dscoder[/]\n"
+                "  [dim]Local: fast, qwen, coder, reason, gpt[/]\n"
                 f"  [dim]Claude: claude, sonnet, haiku, opus ({claude_status})[/]\n"
-                "[bold]/multi <models>[/] - Multi-model mode (e.g. /multi coder qwen deepseek)\n"
+                "[bold]/multi <models>[/] - Multi-model mode (e.g. /multi coder qwen reason)\n"
                 "[bold]/single[/]        - Back to single model mode\n"
                 "[bold]/models[/]       - List all available models\n"
                 "[bold]/scan[/] [path]   - Scan project into context\n"
@@ -303,7 +303,7 @@ class Kodiqa:
             self.console.print(f"Switched to [cyan]{self.model}[/] ({provider})")
         elif command == "/multi":
             if not arg:
-                self.console.print("[red]Usage: /multi coder qwen deepseek  or  /multi all[/]")
+                self.console.print("[red]Usage: /multi coder qwen reason  or  /multi all[/]")
                 return
             if arg.strip().lower() == "all":
                 # Auto-discover all installed Ollama models
@@ -680,7 +680,7 @@ class Kodiqa:
                 pass  # fall through to local model
 
         # Fallback: use the best local model for consensus
-        judge_model = "qwen2.5-coder:14b"  # best local model for analysis
+        judge_model = "qwen3-coder"  # best local model for analysis
         try:
             resp = requests.post(
                 f"{OLLAMA_URL}/api/chat",
