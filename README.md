@@ -148,7 +148,7 @@ refactor this function to be more readable
 
 ## Safety
 
-- **Auto-approved** (no confirmation needed): reading files, listing directories, searching, web search, memory
+- **Auto-approved** (no confirmation needed): reading files, listing directories, searching, web search, memory, asking user questions
 - **Asks permission first** (y/n prompt): writing files, editing files, running commands, git commits
 - **Blocked**: dangerous commands like `rm -rf /`, `sudo rm`, etc.
 
@@ -181,13 +181,31 @@ When conversation gets too long (~80K tokens), Kodiqa automatically summarizes i
 ### Multi-Model Consensus (Default)
 On startup, Kodiqa auto-discovers all installed Ollama models and enables multi-model mode. Every question goes to all models in parallel, each answers independently, then a judge model merges the best parts into a single consensus answer. Use `/single` or `/model <name>` to switch to single model when needed.
 
+### Auto-Update & Model Discovery
+On every startup, Kodiqa automatically:
+1. **Checks installed models for updates** — runs `ollama pull` on each model (only downloads if there's a patch, skips if up to date)
+2. **Discovers new recommended models** — shows models you don't have yet with descriptions
+3. **Asks before pulling** — pick by number, type `all`, or `skip`
+
+New models are automatically added to multi-model mode after pulling.
+
+### Ask User (Structured Questions)
+When the AI needs clarification, it shows a structured question panel with numbered options and descriptions — not just raw text. Supports multi-select and custom answers.
+
+### Status Indicators
+Clean UI with animated spinners and colored dots:
+- **Spinning dots** while thinking/waiting for model
+- **Yellow dot** while a tool is running
+- **Green dot** when a tool completes
+- Descriptive labels like "Read ~/project/main.py" instead of raw tool names
+
 ## Files
 
 ```
 ~/LLMS/kodiqa/
-  kodiqa.py          # Main agent (~500 lines)
-  actions.py         # 17 action handlers with diff view (~450 lines)
-  tools.py           # Claude native tool schemas (~260 lines)
+  kodiqa.py          # Main agent (~800 lines)
+  actions.py         # 19 action handlers with diff view (~600 lines)
+  tools.py           # Claude native tool schemas (~300 lines)
   memory.py          # Persistent memory - SQLite
   web.py             # DuckDuckGo search + page fetch
   config.py          # Models, prompts, settings
@@ -205,6 +223,8 @@ On startup, Kodiqa auto-discovers all installed Ollama models and enables multi-
 ## Tips
 
 - Starts in **multi-model mode** by default (all models + consensus)
+- Models auto-update on startup (patches only, no re-download if current)
+- New models suggested on startup — pick what you want, skip the rest
 - Use `/model coder` or `/model fast` when you want speed over consensus
 - Use `/model claude` for complex work (requires API key, best quality)
 - Use `/model reason` for math/logic/reasoning problems
