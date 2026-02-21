@@ -23,7 +23,7 @@ from config import (
 )
 from memory import MemoryStore
 from actions import parse_actions, execute_action, execute_tool_call, execute_tools_parallel, set_console
-from web import set_search_engine, get_search_engine
+from web import set_search_engine, get_search_engine, set_google_api_keys, get_google_api_keys
 from tools import CLAUDE_TOOLS
 
 # Claude system prompt (more detailed since Claude can handle it)
@@ -56,6 +56,12 @@ class Kodiqa:
         self.claude_key = self.settings.get("claude_api_key", "")
         self.session_file = os.path.join(KODIQA_DIR, "session.json")
         self.multi_models = self._discover_models()  # default: multi-model mode
+        # Load Google API keys if saved
+        g_key = self.settings.get("google_api_key", "")
+        g_cx = self.settings.get("google_cx", "")
+        if g_key and g_cx:
+            set_google_api_keys(g_key, g_cx)
+            set_search_engine("google_api")
         if self.claude_key:
             self.model = self.settings.get("default_model", "claude-sonnet-4-20250514")
         else:
@@ -542,16 +548,43 @@ class Kodiqa:
         elif command == "/search":
             if not arg:
                 engine = get_search_engine()
+                g_key, g_cx = get_google_api_keys()
+                api_status = "[green]configured[/]" if (g_key and g_cx) else "[dim]not set[/]"
                 self.console.print(f"Search engine: [cyan]{engine}[/]")
-                self.console.print("[dim]Usage: /search google  or  /search duckduckgo[/]")
+                self.console.print(f"Google API: {api_status}")
+                self.console.print("[dim]Usage: /search google | /search duckduckgo | /search api[/]")
             elif arg.lower() in ("google", "g"):
                 set_search_engine("google")
-                self.console.print("[green]Switched to Google search[/]")
+                self.console.print("[green]Switched to Google search (scraping, no API key)[/]")
             elif arg.lower() in ("duckduckgo", "ddg", "duck"):
                 set_search_engine("duckduckgo")
                 self.console.print("[green]Switched to DuckDuckGo search[/]")
+            elif arg.lower() in ("api", "google_api", "gapi"):
+                g_key, g_cx = get_google_api_keys()
+                if not g_key or not g_cx:
+                    self.console.print("[yellow]Google Custom Search API setup[/]")
+                    self.console.print("[dim]Get API key: https://console.cloud.google.com/apis[/]")
+                    self.console.print("[dim]Get Search Engine ID: https://programmablesearchengine.google.com/[/]")
+                    try:
+                        api_key = Prompt.ask("\n[bold]Google API key[/] (or 'skip')")
+                        if api_key.strip().lower() == "skip":
+                            return
+                        cx = Prompt.ask("[bold]Search Engine ID (cx)[/]")
+                        if not cx.strip():
+                            return
+                        set_google_api_keys(api_key.strip(), cx.strip())
+                        self.settings["google_api_key"] = api_key.strip()
+                        self.settings["google_cx"] = cx.strip()
+                        save_settings(self.settings)
+                        set_search_engine("google_api")
+                        self.console.print("[green]Google API configured and set as search engine![/]")
+                    except (EOFError, KeyboardInterrupt):
+                        return
+                else:
+                    set_search_engine("google_api")
+                    self.console.print("[green]Switched to Google API search (100 free/day)[/]")
             else:
-                self.console.print("[red]Unknown engine. Use: /search google  or  /search duckduckgo[/]")
+                self.console.print("[red]Unknown engine. Use: /search google | /search duckduckgo | /search api[/]")
         else:
             self.console.print(f"[red]Unknown command: {command}. Type /help[/]")
 

@@ -9,12 +9,14 @@ HEADERS = {
                   "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 }
 
-# Current search engine: "duckduckgo" or "google"
+# Current search engine: "duckduckgo", "google", or "google_api"
 _search_engine = "duckduckgo"
+_google_api_key = ""
+_google_cx = ""
 
 
 def set_search_engine(engine):
-    """Switch search engine: 'duckduckgo' or 'google'."""
+    """Switch search engine: 'duckduckgo', 'google', or 'google_api'."""
     global _search_engine
     _search_engine = engine.lower()
 
@@ -23,9 +25,22 @@ def get_search_engine():
     return _search_engine
 
 
+def set_google_api_keys(api_key, cx):
+    """Set Google Custom Search API credentials."""
+    global _google_api_key, _google_cx
+    _google_api_key = api_key
+    _google_cx = cx
+
+
+def get_google_api_keys():
+    return _google_api_key, _google_cx
+
+
 def web_search(query, max_results=8):
     """Search using the currently selected engine."""
-    if _search_engine == "google":
+    if _search_engine == "google_api" and _google_api_key and _google_cx:
+        return search_google_api(query, max_results)
+    if _search_engine in ("google", "google_api"):
         return search_google(query, max_results)
     return search_duckduckgo(query, max_results)
 
@@ -104,6 +119,39 @@ def search_google(query, max_results=8):
     except Exception:
         # Fallback to DuckDuckGo
         return search_duckduckgo(query, max_results)
+
+
+def search_google_api(query, max_results=8):
+    """Search using official Google Custom Search API (needs API key + CX)."""
+    try:
+        resp = requests.get(
+            "https://www.googleapis.com/customsearch/v1",
+            params={
+                "key": _google_api_key,
+                "cx": _google_cx,
+                "q": query,
+                "num": min(max_results, 10),
+            },
+            timeout=10,
+        )
+        if resp.status_code == 429:
+            # Rate limited, fall back to scraping
+            return search_google(query, max_results)
+        resp.raise_for_status()
+        data = resp.json()
+        results = []
+        for item in data.get("items", []):
+            results.append({
+                "title": item.get("title", ""),
+                "url": item.get("link", ""),
+                "snippet": item.get("snippet", ""),
+            })
+        if results:
+            return results
+        return search_duckduckgo(query, max_results)
+    except Exception:
+        # Fallback to scraping Google, then DuckDuckGo
+        return search_google(query, max_results)
 
 
 def fetch_page(url, max_chars=6000):
