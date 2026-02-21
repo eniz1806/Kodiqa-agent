@@ -271,6 +271,8 @@ class Kodiqa:
 
     def _check_updates(self):
         """Check for model updates and new models on startup."""
+        import subprocess
+
         try:
             # Get installed models
             resp = requests.get(f"{OLLAMA_URL}/api/tags", timeout=5)
@@ -283,17 +285,30 @@ class Kodiqa:
             return
 
         # 1. Check installed models for updates
-        updates_available = []
+        self.console.print(f"\n[dim]Checking {len(installed)} installed models for updates...[/]")
+        updated_count = 0
         for model_name in list(installed.keys()):
             try:
-                # Pull with dry-run style: check manifest
-                resp = requests.post(
-                    f"{OLLAMA_URL}/api/show",
-                    json={"name": model_name},
-                    timeout=5,
-                )
+                with Status(f"  [dim]Checking {model_name}...[/]", console=self.console, spinner="dots"):
+                    result = subprocess.run(
+                        ["ollama", "pull", model_name],
+                        capture_output=True, text=True, timeout=120,
+                    )
+                output = result.stdout + result.stderr
+                if "up to date" in output.lower():
+                    self.console.print(f"  [green]●[/] {model_name} [dim]up to date[/]")
+                elif result.returncode == 0:
+                    self.console.print(f"  [green]●[/] {model_name} [bold green]updated![/]")
+                    updated_count += 1
+                else:
+                    self.console.print(f"  [yellow]●[/] {model_name} [dim]check failed[/]")
+            except subprocess.TimeoutExpired:
+                self.console.print(f"  [yellow]●[/] {model_name} [dim]timeout[/]")
             except Exception:
                 continue
+
+        if updated_count > 0:
+            self.console.print(f"\n[green]{updated_count} model(s) updated![/]")
 
         # 2. Check for popular new models not yet installed
         recommended = {
