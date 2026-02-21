@@ -4,15 +4,15 @@ import json
 import os
 
 OLLAMA_URL = "http://localhost:11434"
-DEFAULT_MODEL = "qwen2.5-coder:14b"
+DEFAULT_MODEL = "qwen3-coder"
 
 # Local Ollama models
 MODEL_ALIASES = {
-    "llama": "llama3.2:3b",
-    "qwen": "qwen2.5:14b",
-    "coder": "qwen2.5-coder:14b",
-    "deepseek": "deepseek-r1:14b",
-    "dscoder": "deepseek-coder-v2:16b",
+    "fast": "qwen3:30b-a3b",
+    "qwen": "qwen3:14b",
+    "coder": "qwen3-coder",
+    "reason": "phi4-reasoning",
+    "gpt": "gpt-oss",
 }
 
 # Claude API models

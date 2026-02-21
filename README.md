@@ -37,11 +37,11 @@ source ~/LLMS/kodiqa/venv/bin/activate && python ~/LLMS/kodiqa/kodiqa.py
 
 | Shortcut | Full Model | Size | Best For |
 |----------|-----------|------|----------|
-| `/model llama` | llama3.2:3b | 2GB | Fast answers, light on battery |
-| `/model qwen` | qwen2.5:14b | 9GB | General purpose, smart |
-| `/model coder` | qwen2.5-coder:14b | 9GB | Coding (default without API key) |
-| `/model deepseek` | deepseek-r1:14b | 9GB | Deep reasoning, math, logic |
-| `/model dscoder` | deepseek-coder-v2:16b | 9GB | Alternative coding model |
+| `/model fast` | qwen3:30b-a3b | ~3GB | Fast answers, 30B brain at 3B speed (MoE) |
+| `/model qwen` | qwen3:14b | ~9GB | General purpose, smart, thinking mode |
+| `/model coder` | qwen3-coder | ~3GB | Coding agent (default without API key, MoE) |
+| `/model reason` | phi4-reasoning | ~9GB | Deep reasoning, math, logic - beats 70B models |
+| `/model gpt` | gpt-oss | ~12GB | OpenAI's open model, reasoning + agentic |
 
 ### Claude API Models (paid, much smarter, requires API key)
 
