@@ -1,0 +1,758 @@
+#!/usr/bin/env python3
+"""Kodiqa - Local AI coding agent. Claude native tools + Ollama text-based actions."""
+
+import json
+import os
+import sys
+import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", message=".*urllib3.*")
+
+import requests
+from rich.console import Console
+from rich.panel import Panel
+from rich.prompt import Prompt
+
+from config import (
+    OLLAMA_URL, DEFAULT_MODEL, MODEL_ALIASES, CLAUDE_ALIASES,
+    CLAUDE_API_URL, CONTEXT_FILE, KODIQA_DIR,
+    MAX_ITERATIONS, SYSTEM_PROMPT, SKIP_DIRS, SKIP_EXTENSIONS, MAX_FILE_SIZE,
+    load_settings, save_settings, is_claude_model,
+)
+from memory import MemoryStore
+from actions import parse_actions, execute_action, execute_tool_call
+from tools import CLAUDE_TOOLS
+
+# Claude system prompt (more detailed since Claude can handle it)
+CLAUDE_SYSTEM = """You are Kodiqa, an expert AI coding assistant running locally on the user's machine. You have direct access to their filesystem, terminal, and the web through your tools.
+
+## How to work effectively
+1. **Read before editing** - Always read a file before modifying it. Understand existing code first.
+2. **Search before assuming** - Use glob and grep to find files and code patterns. Don't guess paths.
+3. **Investigate thoroughly** - When analyzing a project, read the actual source files (package.json, pubspec.yaml, build.gradle, main entry points), don't just look at directory names.
+4. **Chain tools** - Use multiple tools in sequence to complete complex tasks. Read → understand → search → plan → edit.
+5. **Be precise with edits** - The old_string in edit_file must match exactly. Include enough context to be unique.
+6. **Explain your work** - Tell the user what you're doing and why, but be concise.
+7. **Use memory** - Store important project details and user preferences so you remember them next time.
+8. **Write to files when asked** - When the user asks you to save analysis/notes to a file, use write_file, not memory_store.
+
+## Context
+- Current directory: {cwd}
+- Current model: {model}
+{memories}"""
+
+
+class Kodiqa:
+    def __init__(self):
+        self.console = Console()
+        self.memory = MemoryStore()
+        self.history = []
+        self.cwd = os.getcwd()
+        self.settings = load_settings()
+        self.claude_key = self.settings.get("claude_api_key", "")
+        if self.claude_key:
+            self.model = self.settings.get("default_model", "claude-sonnet-4-20250514")
+        else:
+            self.model = self.settings.get("default_model", DEFAULT_MODEL)
+
+    def run(self):
+        self._first_run_setup()
+        self._detect_git()
+        self._welcome()
+        try:
+            while True:
+                try:
+                    user_input = Prompt.ask("\n[bold cyan]You[/]")
+                except (EOFError, KeyboardInterrupt):
+                    self._quit()
+                    return
+                if not user_input.strip():
+                    continue
+                if user_input.strip().startswith("/"):
+                    self._handle_slash(user_input.strip())
+                else:
+                    self._chat(user_input)
+        except KeyboardInterrupt:
+            self._quit()
+
+    def _first_run_setup(self):
+        if "setup_done" in self.settings:
+            return
+        self.console.print(Panel(
+            "[bold]Welcome to Kodiqa![/]\n\n"
+            "Kodiqa works with [cyan]local Ollama models[/] (free, unlimited).\n"
+            "You can also connect [bold yellow]Claude API[/] for much smarter responses.\n\n"
+            "[dim]Claude API costs money per message but is far more capable.\n"
+            "Get your key at: https://console.anthropic.com/settings/keys[/]",
+            title="First Run Setup", border_style="green",
+        ))
+        try:
+            choice = Prompt.ask("Add Claude API key?", choices=["y", "n"], default="n")
+            if choice.lower() == "y":
+                key = Prompt.ask("[bold yellow]Paste your Claude API key[/]")
+                key = key.strip()
+                if key.startswith("sk-ant-"):
+                    self.claude_key = key
+                    self.settings["claude_api_key"] = key
+                    self.settings["default_model"] = "claude-sonnet-4-20250514"
+                    self.model = "claude-sonnet-4-20250514"
+                    self.console.print("[green]Claude API key saved! Using Claude Sonnet as default.[/]")
+                else:
+                    self.console.print("[yellow]Key doesn't look right (should start with sk-ant-). Skipping.[/]")
+            else:
+                self.console.print(f"[dim]Using local models. Default: {self.model}[/]")
+        except (EOFError, KeyboardInterrupt):
+            self.console.print(f"\n[dim]Skipped. Using local models.[/]")
+        self.settings["setup_done"] = True
+        save_settings(self.settings)
+        self.console.print()
+
+    def _detect_git(self):
+        """Detect git repo info for current directory."""
+        import subprocess
+        try:
+            # Check if in a git repo
+            subprocess.run(["git", "rev-parse", "--git-dir"], capture_output=True, check=True, cwd=self.cwd)
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            self.git_info = None
+            return
+        info = {}
+        try:
+            r = subprocess.run(["git", "branch", "--show-current"], capture_output=True, text=True, cwd=self.cwd)
+            info["branch"] = r.stdout.strip() or "detached"
+        except Exception:
+            info["branch"] = "unknown"
+        try:
+            r = subprocess.run(["git", "log", "--oneline", "-5"], capture_output=True, text=True, cwd=self.cwd)
+            info["recent_commits"] = r.stdout.strip()
+        except Exception:
+            info["recent_commits"] = ""
+        try:
+            r = subprocess.run(["git", "status", "--short"], capture_output=True, text=True, cwd=self.cwd)
+            changes = r.stdout.strip()
+            info["changed_files"] = len(changes.splitlines()) if changes else 0
+            info["status_short"] = changes
+        except Exception:
+            info["changed_files"] = 0
+            info["status_short"] = ""
+        self.git_info = info
+
+    def _git_context(self):
+        """Format git info for system prompt."""
+        if not self.git_info:
+            return ""
+        g = self.git_info
+        lines = [f"## Git Repository"]
+        lines.append(f"- Branch: {g['branch']}")
+        if g["changed_files"]:
+            lines.append(f"- Uncommitted changes: {g['changed_files']} files")
+        if g["recent_commits"]:
+            lines.append(f"- Recent commits:\n```\n{g['recent_commits']}\n```")
+        return "\n".join(lines)
+
+    def _get_project_context_path(self):
+        safe_name = self.cwd.strip("/").replace("/", "-")
+        return os.path.join(KODIQA_DIR, "projects", f"{safe_name}.md")
+
+    def _load_context_file(self):
+        parts = []
+        if os.path.isfile(CONTEXT_FILE):
+            try:
+                with open(CONTEXT_FILE, "r") as f:
+                    content = f.read().strip()
+                if content:
+                    parts.append(f"## Global Context (from ~/.kodiqa/KODIQA.md)\n{content}")
+            except Exception:
+                pass
+        project_ctx = self._get_project_context_path()
+        if os.path.isfile(project_ctx):
+            try:
+                with open(project_ctx, "r") as f:
+                    content = f.read().strip()
+                if content:
+                    parts.append(f"## Project Context ({self.cwd})\n{content}")
+            except Exception:
+                pass
+        return "\n\n".join(parts)
+
+    def _welcome(self):
+        provider = "[yellow]Claude API[/]" if is_claude_model(self.model) else "[green]Local/Ollama[/]"
+        git_line = ""
+        if self.git_info:
+            g = self.git_info
+            git_line = f"\nGit: [cyan]{g['branch']}[/]"
+            if g["changed_files"]:
+                git_line += f" ({g['changed_files']} changed files)"
+        self.console.print(Panel(
+            f"[bold green]Kodiqa[/] - AI Coding Agent\n"
+            f"Model: [cyan]{self.model}[/] ({provider}){git_line}\n"
+            f"Type [bold]/help[/] for commands, [bold]/quit[/] to exit",
+            border_style="green",
+        ))
+
+    def _quit(self):
+        self.memory.close()
+        self.console.print("\n[dim]Goodbye![/]")
+
+    def _handle_slash(self, cmd):
+        parts = cmd.split(None, 1)
+        command = parts[0].lower()
+        arg = parts[1] if len(parts) > 1 else ""
+
+        if command in ("/quit", "/exit"):
+            self._quit()
+            sys.exit(0)
+        elif command == "/help":
+            claude_status = "[green]connected[/]" if self.claude_key else "[dim]not set[/]"
+            self.console.print(Panel(
+                "[bold]/model <name>[/]  - Switch model\n"
+                "  [dim]Local: llama, qwen, coder, deepseek, dscoder[/]\n"
+                f"  [dim]Claude: claude, sonnet, haiku, opus ({claude_status})[/]\n"
+                "[bold]/models[/]       - List all available models\n"
+                "[bold]/scan[/] [path]   - Scan project into context\n"
+                "[bold]/clear[/]         - Clear conversation\n"
+                "[bold]/memories[/]      - Show stored memories\n"
+                "[bold]/forget <id>[/]   - Delete a memory\n"
+                "[bold]/compact[/]       - Summarize conversation to save context\n"
+                "[bold]/context[/]       - Show project context file\n"
+                "[bold]/key[/]           - Add/update Claude API key\n"
+                "[bold]/cd <path>[/]     - Change working directory\n"
+                "[bold]/quit[/]          - Exit",
+                title="Commands", border_style="blue",
+            ))
+        elif command == "/model":
+            if not arg:
+                provider = "Claude API" if is_claude_model(self.model) else "Local/Ollama"
+                self.console.print(f"Current model: [cyan]{self.model}[/] ({provider})")
+                self.console.print(f"Local aliases: {', '.join(MODEL_ALIASES.keys())}")
+                if self.claude_key:
+                    self.console.print(f"Claude aliases: {', '.join(CLAUDE_ALIASES.keys())}")
+                return
+            if arg in CLAUDE_ALIASES:
+                if not self.claude_key:
+                    self.console.print("[red]No Claude API key set. Use /key to add one.[/]")
+                    return
+                new_model = CLAUDE_ALIASES[arg]
+            elif arg in MODEL_ALIASES:
+                new_model = MODEL_ALIASES[arg]
+            else:
+                new_model = arg
+            self.model = new_model
+            provider = "[yellow]Claude API[/]" if is_claude_model(self.model) else "[green]Local[/]"
+            self.console.print(f"Switched to [cyan]{self.model}[/] ({provider})")
+        elif command == "/models":
+            self._list_models()
+        elif command == "/clear":
+            self.history = []
+            self.console.print("[dim]Conversation cleared.[/]")
+        elif command == "/memories":
+            result = self.memory.list_all()
+            self.console.print(Panel(result, title="Memories", border_style="magenta"))
+        elif command == "/forget":
+            if not arg:
+                self.console.print("[red]Usage: /forget <id>[/]")
+                return
+            try:
+                self.console.print(self.memory.delete(int(arg)))
+            except ValueError:
+                self.console.print("[red]ID must be a number.[/]")
+        elif command == "/scan":
+            self._scan_project(os.path.expanduser(arg) if arg else self.cwd)
+        elif command == "/compact":
+            self._compact()
+        elif command == "/context":
+            ctx_path = self._get_project_context_path()
+            if os.path.isfile(ctx_path):
+                with open(ctx_path, "r") as f:
+                    self.console.print(Panel(f.read(), title=f"Project Context ({self.cwd})", border_style="magenta"))
+            else:
+                self.console.print(f"[dim]No project context for {self.cwd}[/]")
+            self.console.print(f"[dim]File: {ctx_path}[/]")
+            self.console.print(f"[dim]Global: {CONTEXT_FILE}[/]")
+        elif command == "/key":
+            self._setup_api_key()
+        elif command == "/cd":
+            path = os.path.expanduser(arg) if arg else os.path.expanduser("~")
+            if os.path.isdir(path):
+                self.cwd = os.path.abspath(path)
+                os.chdir(self.cwd)
+                self._detect_git()
+                git_note = ""
+                if self.git_info:
+                    git_note = f" (git: {self.git_info['branch']})"
+                self.console.print(f"[dim]Changed to {self.cwd}{git_note}[/]")
+            else:
+                self.console.print(f"[red]Not a directory: {path}[/]")
+        else:
+            self.console.print(f"[red]Unknown command: {command}. Type /help[/]")
+
+    def _setup_api_key(self):
+        if self.claude_key:
+            masked = self.claude_key[:10] + "..." + self.claude_key[-4:]
+            self.console.print(f"Current key: [dim]{masked}[/]")
+        try:
+            key = Prompt.ask("[bold yellow]Paste Claude API key (or 'remove' to delete)[/]")
+            key = key.strip()
+            if key.lower() == "remove":
+                self.claude_key = ""
+                self.settings.pop("claude_api_key", None)
+                if is_claude_model(self.model):
+                    self.model = DEFAULT_MODEL
+                    self.settings["default_model"] = DEFAULT_MODEL
+                save_settings(self.settings)
+                self.console.print("[dim]Claude API key removed. Switched to local models.[/]")
+            elif key.startswith("sk-ant-"):
+                self.claude_key = key
+                self.settings["claude_api_key"] = key
+                save_settings(self.settings)
+                self.console.print("[green]Claude API key updated![/]")
+                self.console.print("[dim]Use /model claude to switch to Claude.[/]")
+            else:
+                self.console.print("[yellow]Key should start with sk-ant-. Not saved.[/]")
+        except (EOFError, KeyboardInterrupt):
+            self.console.print("\n[dim]Cancelled.[/]")
+
+    def _list_models(self):
+        lines = []
+        if self.claude_key:
+            lines.append("[bold yellow]Claude API Models:[/]")
+            for alias, model in CLAUDE_ALIASES.items():
+                marker = " [green]◀ current[/]" if model == self.model else ""
+                lines.append(f"  [cyan]{model}[/] (/{alias}){marker}")
+            lines.append("")
+        lines.append("[bold green]Local Ollama Models:[/]")
+        try:
+            resp = requests.get(f"{OLLAMA_URL}/api/tags", timeout=5)
+            resp.raise_for_status()
+            models = resp.json().get("models", [])
+            if not models:
+                lines.append("  [dim]No models found. Is Ollama running?[/]")
+            else:
+                for m in models:
+                    name = m["name"]
+                    size = m.get("size", 0)
+                    size_str = f"{size / 1e9:.1f}GB" if size > 1e9 else f"{size / 1e6:.0f}MB"
+                    marker = " [green]◀ current[/]" if name == self.model else ""
+                    lines.append(f"  [cyan]{name}[/] ({size_str}){marker}")
+        except Exception:
+            lines.append("  [dim]Can't reach Ollama (not running?)[/]")
+        self.console.print(Panel("\n".join(lines), title="Available Models", border_style="blue"))
+
+    def _scan_project(self, path):
+        if not os.path.isdir(path):
+            self.console.print(f"[red]Not a directory: {path}[/]")
+            return
+        self.console.print(f"[dim]Scanning {path}...[/]")
+        files_content = []
+        total_chars = 0
+        file_count = 0
+        for root, dirs, files in os.walk(path):
+            dirs[:] = [d for d in dirs if d not in SKIP_DIRS and not d.startswith(".")]
+            for fname in sorted(files):
+                ext = os.path.splitext(fname)[1].lower()
+                if ext in SKIP_EXTENSIONS:
+                    continue
+                fpath = os.path.join(root, fname)
+                try:
+                    size = os.path.getsize(fpath)
+                    if size > MAX_FILE_SIZE or size == 0:
+                        continue
+                    with open(fpath, "r", errors="replace") as f:
+                        content = f.read()
+                    rel = os.path.relpath(fpath, path)
+                    files_content.append(f"### {rel}\n```\n{content}\n```")
+                    total_chars += len(content)
+                    file_count += 1
+                    if total_chars > 500_000:
+                        files_content.append("... (stopped, context limit)")
+                        break
+                except (PermissionError, OSError):
+                    continue
+            if total_chars > 500_000:
+                break
+        if not files_content:
+            self.console.print("[yellow]No readable files found.[/]")
+            return
+        scan_text = f"Project scan of {path} ({file_count} files):\n\n" + "\n\n".join(files_content)
+        self.history.append({"role": "user", "content": f"[Project scan of {path}]"})
+        self.history.append({"role": "assistant", "content": scan_text})
+        self.console.print(f"[green]Scanned {file_count} files ({total_chars:,} chars) into context.[/]")
+
+    def _compact(self):
+        if len(self.history) < 4:
+            self.console.print("[dim]Conversation too short to compact.[/]")
+            return
+        self.console.print("[dim]Compacting conversation...[/]")
+        try:
+            if is_claude_model(self.model):
+                text = self._claude_nostream(
+                    "Summarize this conversation concisely, keeping all key facts, decisions, code, and file paths discussed.",
+                    self.history + [{"role": "user", "content": "Summarize our conversation keeping all important details."}],
+                )
+            else:
+                msgs = [{"role": "system", "content": "Summarize this conversation concisely."}] + self.history
+                msgs.append({"role": "user", "content": "Summarize our conversation keeping all important details."})
+                resp = requests.post(
+                    f"{OLLAMA_URL}/api/chat",
+                    json={"model": self.model, "messages": msgs, "stream": False},
+                    timeout=120,
+                )
+                resp.raise_for_status()
+                text = resp.json().get("message", {}).get("content", "")
+            if text:
+                self.history = [{"role": "assistant", "content": f"[Conversation Summary]\n{text}"}]
+                self.console.print("[green]Conversation compacted.[/]")
+            else:
+                self.console.print("[yellow]Couldn't generate summary.[/]")
+        except Exception as e:
+            self.console.print(f"[red]Compact error: {e}[/]")
+
+    # ── Auto-compact when context is getting large ──
+
+    def _estimate_tokens(self):
+        """Rough token estimate: ~4 chars per token."""
+        total = sum(len(m.get("content", "")) for m in self.history if isinstance(m.get("content"), str))
+        # Also count tool results in content blocks
+        for m in self.history:
+            if isinstance(m.get("content"), list):
+                for block in m["content"]:
+                    if isinstance(block, dict):
+                        total += len(str(block.get("content", "")))
+        return total // 4
+
+    def _auto_compact_if_needed(self):
+        """Auto-compact when context exceeds ~80K tokens."""
+        tokens = self._estimate_tokens()
+        if tokens > 80000:
+            self.console.print(f"[dim]Context large (~{tokens:,} tokens). Auto-compacting...[/]")
+            self._compact()
+
+    # ── Main chat dispatch ──
+
+    def _chat(self, user_msg):
+        self._auto_compact_if_needed()
+        if is_claude_model(self.model):
+            self._chat_claude(user_msg)
+        else:
+            self._chat_ollama(user_msg)
+
+    # ── Ollama chat (text-based actions) ──
+
+    def _chat_ollama(self, user_msg):
+        self.history.append({"role": "user", "content": user_msg})
+        for iteration in range(MAX_ITERATIONS):
+            memories_ctx = self.memory.get_context()
+            context_file_ctx = self._load_context_file()
+            system_prompt = SYSTEM_PROMPT.format(cwd=self.cwd, model=self.model, memories=memories_ctx)
+            if context_file_ctx:
+                system_prompt += "\n\n" + context_file_ctx
+            git_ctx = self._git_context()
+            if git_ctx:
+                system_prompt += "\n\n" + git_ctx
+            messages = [{"role": "system", "content": system_prompt}] + self.history
+
+            assistant_text = self._stream_ollama(messages)
+            if assistant_text is None:
+                return
+            self.history.append({"role": "assistant", "content": assistant_text})
+
+            actions = parse_actions(assistant_text)
+            if not actions:
+                break
+            results = []
+            for action in actions:
+                self.console.print(f"  [dim]→ {action['name']}[/]", end="")
+                result = execute_action(action, self.memory, self._confirm)
+                if len(result) > 20000:
+                    result = result[:20000] + "\n... (truncated)"
+                results.append(f"[Result of {action['name']}]\n{result}")
+                self.console.print(f" [green]✓[/]")
+            self.history.append({"role": "user", "content": f"[Action Results]\n" + "\n\n".join(results)})
+            if iteration < MAX_ITERATIONS - 1:
+                self.console.print(f"  [dim]({iteration + 1}/{MAX_ITERATIONS} iterations)[/]")
+        else:
+            self.console.print(f"[yellow]Reached max iterations ({MAX_ITERATIONS}). Stopping.[/]")
+
+    # ── Claude chat (native tool_use API) ──
+
+    def _chat_claude(self, user_msg):
+        self.history.append({"role": "user", "content": user_msg})
+
+        for iteration in range(MAX_ITERATIONS):
+            memories_ctx = self.memory.get_context()
+            context_file_ctx = self._load_context_file()
+            system_prompt = CLAUDE_SYSTEM.format(cwd=self.cwd, model=self.model, memories=memories_ctx)
+            if context_file_ctx:
+                system_prompt += "\n\n" + context_file_ctx
+            git_ctx = self._git_context()
+            if git_ctx:
+                system_prompt += "\n\n" + git_ctx
+
+            # Build Claude messages (must alternate user/assistant)
+            messages = self._build_claude_messages()
+
+            response = self._call_claude_stream(system_prompt, messages)
+            if response is None:
+                return
+
+            text_content = response.get("text", "")
+            tool_calls = response.get("tool_calls", [])
+            stop_reason = response.get("stop_reason", "end_turn")
+
+            # Build assistant message content blocks
+            assistant_content = []
+            if text_content:
+                assistant_content.append({"type": "text", "text": text_content})
+            for tc in tool_calls:
+                assistant_content.append({
+                    "type": "tool_use",
+                    "id": tc["id"],
+                    "name": tc["name"],
+                    "input": tc["input"],
+                })
+            self.history.append({"role": "assistant", "content": assistant_content})
+
+            if not tool_calls:
+                break  # No tools = done
+
+            # Execute tools and build tool results
+            tool_results = []
+            for tc in tool_calls:
+                self.console.print(f"  [dim]→ {tc['name']}[/]", end="")
+                result = execute_tool_call(tc["name"], tc["input"], self.memory, self._confirm)
+                if len(result) > 20000:
+                    result = result[:20000] + "\n... (truncated)"
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": tc["id"],
+                    "content": result,
+                })
+                self.console.print(f" [green]✓[/]")
+
+            # Add tool results as user message (Claude API format)
+            self.history.append({"role": "user", "content": tool_results})
+
+            if iteration < MAX_ITERATIONS - 1:
+                self.console.print(f"  [dim]({iteration + 1}/{MAX_ITERATIONS} iterations)[/]")
+
+        else:
+            self.console.print(f"[yellow]Reached max iterations ({MAX_ITERATIONS}). Stopping.[/]")
+
+    def _build_claude_messages(self):
+        """Convert history to Claude API format. Handles content blocks properly."""
+        messages = []
+        for msg in self.history:
+            role = msg["role"]
+            content = msg["content"]
+            if role == "system":
+                continue
+            if role not in ("user", "assistant"):
+                role = "user"
+            # Handle string content and list content (tool_use/tool_result blocks)
+            if isinstance(content, str):
+                # Merge consecutive same-role text messages
+                if messages and messages[-1]["role"] == role and isinstance(messages[-1]["content"], str):
+                    messages[-1]["content"] += "\n\n" + content
+                else:
+                    messages.append({"role": role, "content": content})
+            elif isinstance(content, list):
+                # Content blocks (tool_use or tool_result) - don't merge
+                messages.append({"role": role, "content": content})
+        # Ensure starts with user
+        if not messages or messages[0]["role"] != "user":
+            messages.insert(0, {"role": "user", "content": "Hello"})
+        return messages
+
+    def _call_claude_stream(self, system_prompt, messages):
+        """Stream Claude API with native tool_use support. Returns parsed response."""
+        if not self.claude_key:
+            self.console.print("[red]No Claude API key. Use /key to add one.[/]")
+            return None
+
+        try:
+            resp = requests.post(
+                CLAUDE_API_URL,
+                headers={
+                    "x-api-key": self.claude_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": self.model,
+                    "max_tokens": 8192,
+                    "system": system_prompt,
+                    "messages": messages,
+                    "tools": CLAUDE_TOOLS,
+                    "stream": True,
+                },
+                stream=True,
+                timeout=300,
+            )
+            if resp.status_code == 401:
+                self.console.print("[red]Invalid Claude API key. Use /key to update it.[/]")
+                return None
+            if resp.status_code == 429:
+                self.console.print("[red]Claude rate limit hit. Wait a moment and try again.[/]")
+                return None
+            if resp.status_code >= 400:
+                self.console.print(f"[red]Claude API error {resp.status_code}: {resp.text[:200]}[/]")
+                return None
+            resp.raise_for_status()
+        except requests.ConnectionError:
+            self.console.print("[red]Can't connect to Claude API. Check your internet.[/]")
+            return None
+        except Exception as e:
+            self.console.print(f"[red]Claude error: {e}[/]")
+            return None
+
+        # Parse streaming response
+        self.console.print()
+        self.console.print("[bold yellow]Kodiqa[/] ", end="")
+
+        full_text = []
+        tool_calls = []
+        current_tool = None
+        current_tool_json = []
+        stop_reason = "end_turn"
+
+        try:
+            for line in resp.iter_lines():
+                if not line:
+                    continue
+                line_str = line.decode("utf-8", errors="replace")
+                if not line_str.startswith("data: "):
+                    continue
+                data = line_str[6:].strip()
+                if data == "[DONE]":
+                    break
+                try:
+                    event = json.loads(data)
+                except json.JSONDecodeError:
+                    continue
+
+                event_type = event.get("type", "")
+
+                if event_type == "content_block_start":
+                    block = event.get("content_block", {})
+                    if block.get("type") == "tool_use":
+                        current_tool = {"id": block["id"], "name": block["name"], "input": {}}
+                        current_tool_json = []
+                        self.console.print(f"\n  [dim]🔧 {block['name']}[/]", end="")
+
+                elif event_type == "content_block_delta":
+                    delta = event.get("delta", {})
+                    if delta.get("type") == "text_delta":
+                        token = delta.get("text", "")
+                        if token:
+                            full_text.append(token)
+                            sys.stdout.write(token)
+                            sys.stdout.flush()
+                    elif delta.get("type") == "input_json_delta":
+                        json_chunk = delta.get("partial_json", "")
+                        if json_chunk:
+                            current_tool_json.append(json_chunk)
+
+                elif event_type == "content_block_stop":
+                    if current_tool is not None:
+                        try:
+                            input_str = "".join(current_tool_json)
+                            current_tool["input"] = json.loads(input_str) if input_str else {}
+                        except json.JSONDecodeError:
+                            current_tool["input"] = {}
+                        tool_calls.append(current_tool)
+                        current_tool = None
+                        current_tool_json = []
+
+                elif event_type == "message_delta":
+                    stop_reason = event.get("delta", {}).get("stop_reason", stop_reason)
+
+                elif event_type == "error":
+                    err = event.get("error", {})
+                    self.console.print(f"\n[red]Claude error: {err.get('message', 'Unknown')}[/]")
+
+        except KeyboardInterrupt:
+            self.console.print("\n[dim](interrupted)[/]")
+
+        self.console.print()
+        return {"text": "".join(full_text), "tool_calls": tool_calls, "stop_reason": stop_reason}
+
+    def _claude_nostream(self, system, messages):
+        """Non-streaming Claude call (for compact)."""
+        if not self.claude_key:
+            return ""
+        claude_msgs = self._build_claude_messages()
+        try:
+            resp = requests.post(
+                CLAUDE_API_URL,
+                headers={
+                    "x-api-key": self.claude_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={"model": self.model, "max_tokens": 4096, "system": system, "messages": claude_msgs},
+                timeout=120,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return data.get("content", [{}])[0].get("text", "")
+        except Exception:
+            return ""
+
+    # ── Ollama streaming ──
+
+    def _stream_ollama(self, messages):
+        try:
+            resp = requests.post(
+                f"{OLLAMA_URL}/api/chat",
+                json={"model": self.model, "messages": messages, "stream": True},
+                stream=True, timeout=300,
+            )
+            resp.raise_for_status()
+        except requests.ConnectionError:
+            self.console.print("[red]Can't connect to Ollama. Is it running?[/]")
+            return None
+        except Exception as e:
+            self.console.print(f"[red]Ollama error: {e}[/]")
+            return None
+
+        self.console.print()
+        full_text = []
+        self.console.print("[bold green]Kodiqa[/] ", end="")
+        try:
+            for line in resp.iter_lines():
+                if not line:
+                    continue
+                try:
+                    chunk = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if chunk.get("done"):
+                    break
+                token = chunk.get("message", {}).get("content", "")
+                if token:
+                    full_text.append(token)
+                    sys.stdout.write(token)
+                    sys.stdout.flush()
+        except KeyboardInterrupt:
+            self.console.print("\n[dim](interrupted)[/]")
+        self.console.print()
+        return "".join(full_text)
+
+    # ── Shared ──
+
+    def _confirm(self, description):
+        self.console.print()
+        try:
+            answer = Prompt.ask(f"  [bold yellow]Allow:[/] {description}", choices=["y", "n"], default="y")
+            return answer.lower() == "y"
+        except (EOFError, KeyboardInterrupt):
+            return False
+
+
+def main():
+    kodiqa = Kodiqa()
+    kodiqa.run()
+
+
+if __name__ == "__main__":
+    main()
