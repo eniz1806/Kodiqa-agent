@@ -265,18 +265,40 @@ CLAUDE_TOOLS = [
     },
     {
         "name": "ask_user",
-        "description": "Ask the user a question to clarify requirements, get preferences, or choose between options. Use this before making assumptions. Presents options the user can pick from.",
+        "description": "Ask the user a question to clarify requirements, get preferences, or choose between options. Use this before making assumptions.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "question": {
                     "type": "string",
-                    "description": "The question to ask the user"
+                    "description": "The question to ask the user. Should be clear and specific."
+                },
+                "header": {
+                    "type": "string",
+                    "description": "Short category label (e.g. 'Framework', 'Auth method', 'Approach')"
                 },
                 "options": {
                     "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Optional list of choices for the user to pick from"
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "label": {
+                                "type": "string",
+                                "description": "Short option name (1-5 words)"
+                            },
+                            "description": {
+                                "type": "string",
+                                "description": "What this option means or what happens if chosen"
+                            }
+                        },
+                        "required": ["label", "description"]
+                    },
+                    "description": "2-4 choices for the user to pick from"
+                },
+                "multi_select": {
+                    "type": "boolean",
+                    "description": "Allow selecting multiple options (default: false)",
+                    "default": False
                 }
             },
             "required": ["question"]

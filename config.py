@@ -165,10 +165,16 @@ tags: optional tags
 query: search terms
 [/ACTION]
 
-### Ask User
+### Ask User (use this to clarify before assuming)
 [ACTION: ask_user]
-question: What framework do you want to use?
+question: Which framework should we use?
+header: Framework
 options: React, Vue, Angular, Svelte
+[/ACTION]
+
+You can also ask open-ended questions without options:
+[ACTION: ask_user]
+question: What should the function be called?
 [/ACTION]
 
 ## Rules
@@ -180,6 +186,7 @@ options: React, Vue, Angular, Svelte
 6. For write_file and edit_file: the content/old/new values are everything on the lines after the key until the next key or [/ACTION]
 7. Be concise but thorough in explanations
 8. When asked to investigate or scan a project, actually READ the key files (pubspec.yaml, build.gradle, package.json, main entry points) - do not guess from directory names alone
+9. Use ask_user when requirements are unclear or there are multiple valid approaches - don't assume, ask first
 
 ## Context
 - Current directory: {cwd}

@@ -226,7 +226,12 @@ def _dispatch(name, p, memory):
         "memory_search": lambda: memory.search(p.get("query", "")),
         "read_image": lambda: do_read_image(p.get("path", "")),
         "read_pdf": lambda: do_read_pdf(p.get("path", "")),
-        "ask_user": lambda: do_ask_user(p.get("question", ""), _parse_options(p.get("options", []))),
+        "ask_user": lambda: do_ask_user(
+            p.get("question", ""),
+            _parse_options(p.get("options", [])),
+            p.get("header", ""),
+            p.get("multi_select", False),
+        ),
     }
     handler = handlers.get(name)
     if handler:
@@ -560,39 +565,95 @@ def do_read_pdf(path):
 
 
 def _parse_options(options):
-    """Parse options from either a list (Claude) or comma-separated string (Ollama)."""
+    """Parse options from either structured (Claude) or comma-separated string (Ollama)."""
     if isinstance(options, list):
-        return options
+        # Claude sends list of {label, description} objects
+        parsed = []
+        for opt in options:
+            if isinstance(opt, dict):
+                parsed.append(opt)
+            elif isinstance(opt, str):
+                parsed.append({"label": opt, "description": ""})
+        return parsed
     if isinstance(options, str) and options.strip():
-        return [o.strip() for o in options.split(",") if o.strip()]
+        return [{"label": o.strip(), "description": ""} for o in options.split(",") if o.strip()]
     return []
 
 
-def do_ask_user(question, options=None):
-    """Ask the user a question and return their answer."""
+def do_ask_user(question, options=None, header=None, multi_select=False):
+    """Ask the user a structured question with rich UI."""
     if not question.strip():
         return "No question provided."
-    if _console:
-        _console.print(f"\n[bold yellow]Question:[/] {question}")
-        if options and isinstance(options, list) and len(options) > 0:
-            for i, opt in enumerate(options, 1):
-                _console.print(f"  [cyan]{i}.[/] {opt}")
-            _console.print(f"  [dim]{len(options) + 1}. Other (type your own answer)[/]")
-            from rich.prompt import Prompt
-            choice = Prompt.ask("[bold]Your choice[/]")
-            # Check if they picked a number
-            try:
-                idx = int(choice)
-                if 1 <= idx <= len(options):
-                    answer = options[idx - 1]
-                    _console.print(f"  [green]Selected: {answer}[/]")
-                    return f"User selected: {answer}"
-            except ValueError:
-                pass
-            # They typed a custom answer
+    if _console is None:
+        return "Could not ask user (no console available)."
+
+    from rich.panel import Panel
+    from rich.prompt import Prompt
+
+    # Build the question panel
+    content_lines = []
+    if header:
+        content_lines.append(f"[dim]{header}[/]")
+    content_lines.append(f"[bold]{question}[/]")
+
+    if options and len(options) > 0:
+        content_lines.append("")
+        for i, opt in enumerate(options, 1):
+            label = opt.get("label", str(opt)) if isinstance(opt, dict) else str(opt)
+            desc = opt.get("description", "") if isinstance(opt, dict) else ""
+            if desc:
+                content_lines.append(f"  [cyan bold]{i}.[/] [bold]{label}[/]")
+                content_lines.append(f"     [dim]{desc}[/]")
+            else:
+                content_lines.append(f"  [cyan bold]{i}.[/] [bold]{label}[/]")
+        content_lines.append(f"  [dim]{len(options) + 1}. Other (type your own answer)[/]")
+
+        if multi_select:
+            content_lines.append("")
+            content_lines.append("[dim italic]You can select multiple: e.g. 1,3 or 1 2 3[/]")
+
+    _console.print(Panel(
+        "\n".join(content_lines),
+        border_style="yellow",
+        title="[bold yellow]Question[/]",
+        padding=(1, 2),
+    ))
+
+    if options and len(options) > 0:
+        choice = Prompt.ask("[bold yellow]Your choice[/]")
+
+        if multi_select:
+            # Parse multiple selections: "1,3" or "1 2 3" or "1, 3"
+            parts = [p.strip() for p in choice.replace(",", " ").split() if p.strip()]
+            selected = []
+            custom = []
+            for part in parts:
+                try:
+                    idx = int(part)
+                    if 1 <= idx <= len(options):
+                        label = options[idx - 1].get("label", str(options[idx - 1]))
+                        selected.append(label)
+                except ValueError:
+                    custom.append(part)
+            if selected:
+                for s in selected:
+                    _console.print(f"  [green]+ {s}[/]")
+                result = "User selected: " + ", ".join(selected)
+                if custom:
+                    result += f" (and typed: {' '.join(custom)})"
+                return result
             return f"User answered: {choice}"
         else:
-            from rich.prompt import Prompt
-            answer = Prompt.ask("[bold]Your answer[/]")
-            return f"User answered: {answer}"
-    return "Could not ask user (no console available)."
+            # Single select
+            try:
+                idx = int(choice.strip())
+                if 1 <= idx <= len(options):
+                    label = options[idx - 1].get("label", str(options[idx - 1]))
+                    _console.print(f"  [green]Selected: {label}[/]")
+                    return f"User selected: {label}"
+            except ValueError:
+                pass
+            return f"User answered: {choice}"
+    else:
+        answer = Prompt.ask("[bold yellow]Your answer[/]")
+        return f"User answered: {answer}"
