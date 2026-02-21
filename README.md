@@ -27,6 +27,9 @@ source ~/LLMS/kodiqa/venv/bin/activate && python ~/LLMS/kodiqa/kodiqa.py
 | `/compact` | Summarize conversation to save context window (use when chat gets long) |
 | `/context` | Show project context file |
 | `/key` | Add/update/remove Claude API key |
+| `/multi <model1> <model2>` | Query multiple models at once + consensus answer |
+| `/multi all` | Query ALL installed models at once + consensus |
+| `/single` | Switch back to single-model mode |
 | `/cd <path>` | Change working directory |
 | `/help` | Show help |
 | `/quit` | Exit (or press Ctrl+C) |
@@ -52,7 +55,7 @@ source ~/LLMS/kodiqa/venv/bin/activate && python ~/LLMS/kodiqa/kodiqa.py
 | `/model haiku` | claude-haiku-4.5 | Fast + cheap, good for simple tasks |
 | `/model opus` | claude-opus-4 | Smartest, best for complex coding |
 
-You can also use the full model name: `/model qwen2.5-coder:14b`
+You can also use the full model name: `/model qwen3:14b`
 
 ## Claude API Setup
 
@@ -166,6 +169,9 @@ On startup and when changing directories, Kodiqa detects your git branch, recent
 ### Auto-compact
 When conversation gets too long (~80K tokens), Kodiqa automatically summarizes it to keep things fast.
 
+### Multi-Model Consensus
+Query all your models at once with `/multi all`. Each model answers independently, then a judge model merges the best parts into a single consensus answer. Better than any single model alone.
+
 ## Files
 
 ```
@@ -189,10 +195,11 @@ When conversation gets too long (~80K tokens), Kodiqa automatically summarizes i
 
 ## Tips
 
-- Use `/model llama` for quick questions (faster, saves battery)
+- Use `/model fast` for quick questions (MoE, saves battery)
 - Use `/model coder` for coding tasks (default with local models)
 - Use `/model claude` for complex work (requires API key, best quality)
-- Use `/model deepseek` for math/logic/reasoning problems
+- Use `/model reason` for math/logic/reasoning problems
+- Use `/multi all` for best answers (queries all models + consensus)
 - Use `/scan` before asking about a project so the AI understands the code
 - Use `/compact` when the conversation gets long and responses slow down
 - Memories persist forever - Kodiqa remembers across sessions
@@ -203,5 +210,5 @@ When conversation gets too long (~80K tokens), Kodiqa automatically summarizes i
 
 - Python 3.9+
 - Ollama running for local models (`ollama serve`)
-- At least one model pulled (`ollama pull qwen2.5-coder:14b`)
+- At least one model pulled (`ollama pull qwen3-coder`)
 - (Optional) Claude API key for smart mode
