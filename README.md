@@ -17,19 +17,19 @@ source ~/LLMS/kodiqa/venv/bin/activate && python ~/LLMS/kodiqa/kodiqa.py
 
 | Command | What it does |
 |---------|-------------|
-| `/model <name>` | Switch AI model (see model list below) |
+| `/model <name>` | Switch to a single AI model (switches to single mode) |
 | `/model` | Show current model |
 | `/models` | List all installed Ollama models |
-| `/scan [path]` | Scan a project folder - reads all files into context so the AI understands the project |
+| `/multi all` | Multi-model mode - all models + consensus (DEFAULT on startup) |
+| `/multi <m1> <m2>` | Multi-model mode with specific models |
+| `/single` | Switch to single-model mode (uses default model) |
+| `/scan [path]` | Scan a project folder - reads all files into context |
 | `/clear` | Clear conversation history (start fresh) |
 | `/memories` | Show everything Kodiqa remembers about you |
 | `/forget <id>` | Delete a specific memory by its ID number |
-| `/compact` | Summarize conversation to save context window (use when chat gets long) |
+| `/compact` | Summarize conversation to save context window |
 | `/context` | Show project context file |
 | `/key` | Add/update/remove Claude API key |
-| `/multi <model1> <model2>` | Query multiple models at once + consensus answer |
-| `/multi all` | Query ALL installed models at once + consensus |
-| `/single` | Switch back to single-model mode |
 | `/cd <path>` | Change working directory |
 | `/help` | Show help |
 | `/quit` | Exit (or press Ctrl+C) |
@@ -57,15 +57,24 @@ source ~/LLMS/kodiqa/venv/bin/activate && python ~/LLMS/kodiqa/kodiqa.py
 
 You can also use the full model name: `/model qwen3:14b`
 
+## Default Behavior
+
+Kodiqa starts in **multi-model mode** by default. Every question gets sent to all installed models in parallel, and a judge model merges the best parts into a consensus answer.
+
+- `/model claude` → switches to single Claude mode (asks for API key if not set)
+- `/model coder` → switches to single qwen3-coder mode
+- `/multi all` → back to multi-model mode
+
 ## Claude API Setup
 
-On first run, Kodiqa asks if you want to add a Claude API key. You can also do it anytime:
+On first run, Kodiqa asks if you want to add a Claude API key. You can also add it anytime:
 
 ```
 /key              → add or update your API key
 /key              → type "remove" to delete it and go back to local models
-/model claude     → switch to Claude
-/model coder      → switch back to local
+/model claude     → prompts for API key if not set, switches to single Claude mode
+/model coder      → switch back to single local model
+/multi all        → back to multi-model consensus mode
 ```
 
 Get your API key at: https://console.anthropic.com/settings/keys
@@ -169,8 +178,8 @@ On startup and when changing directories, Kodiqa detects your git branch, recent
 ### Auto-compact
 When conversation gets too long (~80K tokens), Kodiqa automatically summarizes it to keep things fast.
 
-### Multi-Model Consensus
-Query all your models at once with `/multi all`. Each model answers independently, then a judge model merges the best parts into a single consensus answer. Better than any single model alone.
+### Multi-Model Consensus (Default)
+On startup, Kodiqa auto-discovers all installed Ollama models and enables multi-model mode. Every question goes to all models in parallel, each answers independently, then a judge model merges the best parts into a single consensus answer. Use `/single` or `/model <name>` to switch to single model when needed.
 
 ## Files
 
@@ -195,11 +204,11 @@ Query all your models at once with `/multi all`. Each model answers independentl
 
 ## Tips
 
-- Use `/model fast` for quick questions (MoE, saves battery)
-- Use `/model coder` for coding tasks (default with local models)
+- Starts in **multi-model mode** by default (all models + consensus)
+- Use `/model coder` or `/model fast` when you want speed over consensus
 - Use `/model claude` for complex work (requires API key, best quality)
 - Use `/model reason` for math/logic/reasoning problems
-- Use `/multi all` for best answers (queries all models + consensus)
+- Use `/multi all` to go back to multi-model consensus mode
 - Use `/scan` before asking about a project so the AI understands the code
 - Use `/compact` when the conversation gets long and responses slow down
 - Memories persist forever - Kodiqa remembers across sessions
