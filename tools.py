@@ -235,4 +235,32 @@ CLAUDE_TOOLS = [
             "required": ["query"]
         }
     },
+    {
+        "name": "read_image",
+        "description": "Read an image file (PNG, JPG, GIF, WebP). Returns the image for visual analysis. Use this when the user asks about screenshots, UI mockups, diagrams, etc.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Absolute path to the image file"
+                }
+            },
+            "required": ["path"]
+        }
+    },
+    {
+        "name": "read_pdf",
+        "description": "Extract text from a PDF file.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Absolute path to the PDF file"
+                }
+            },
+            "required": ["path"]
+        }
+    },
 ]

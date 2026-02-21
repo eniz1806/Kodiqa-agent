@@ -140,13 +140,40 @@ refactor this function to be more readable
 - **Asks permission first** (y/n prompt): writing files, editing files, running commands, git commits
 - **Blocked**: dangerous commands like `rm -rf /`, `sudo rm`, etc.
 
+### Image & PDF
+```
+look at this screenshot ~/Desktop/screenshot.png
+read the PDF ~/Documents/report.pdf
+```
+
+## Advanced Features
+
+### Diff Preview
+Before any file edit or write, Kodiqa shows a colored diff so you can see exactly what changes before approving.
+
+### Parallel Tool Execution
+When Claude needs multiple read-only operations (reading files, searching, etc.), they run in parallel for faster results.
+
+### Conversation Recovery
+Sessions auto-save to `~/.kodiqa/session.json`. If Kodiqa crashes or you close the terminal, next launch offers to resume where you left off.
+
+### Pre-commit Hooks
+If your project has git pre-commit hooks set up, Kodiqa runs them automatically before committing.
+
+### Git Awareness
+On startup and when changing directories, Kodiqa detects your git branch, recent commits, and changed files - injected into the AI's context automatically.
+
+### Auto-compact
+When conversation gets too long (~80K tokens), Kodiqa automatically summarizes it to keep things fast.
+
 ## Files
 
 ```
 ~/LLMS/kodiqa/
-  kodiqa.py          # Main agent
-  actions.py         # 15 action handlers
-  memory.py          # Persistent memory (SQLite)
+  kodiqa.py          # Main agent (~500 lines)
+  actions.py         # 17 action handlers with diff view (~450 lines)
+  tools.py           # Claude native tool schemas (~260 lines)
+  memory.py          # Persistent memory - SQLite
   web.py             # DuckDuckGo search + page fetch
   config.py          # Models, prompts, settings
   requirements.txt   # Dependencies
@@ -154,20 +181,27 @@ refactor this function to be more readable
 
 ~/.kodiqa/
   memory.db          # Your memories (persists across sessions)
+  settings.json      # API keys, default model
+  session.json       # Auto-saved conversation for recovery
+  KODIQA.md          # Global context (always loaded)
+  projects/          # Per-project context files (not in your repos)
 ```
 
 ## Tips
 
 - Use `/model llama` for quick questions (faster, saves battery)
-- Use `/model coder` for coding tasks (default, best quality)
+- Use `/model coder` for coding tasks (default with local models)
+- Use `/model claude` for complex work (requires API key, best quality)
 - Use `/model deepseek` for math/logic/reasoning problems
 - Use `/scan` before asking about a project so the AI understands the code
 - Use `/compact` when the conversation gets long and responses slow down
 - Memories persist forever - Kodiqa remembers across sessions
 - You can run any shell command through Kodiqa (it will ask permission first)
+- Sessions auto-save - just restart if anything goes wrong
 
 ## Requirements
 
-- Ollama running (`ollama serve`)
-- At least one model pulled (`ollama pull qwen2.5-coder:14b`)
 - Python 3.9+
+- Ollama running for local models (`ollama serve`)
+- At least one model pulled (`ollama pull qwen2.5-coder:14b`)
+- (Optional) Claude API key for smart mode

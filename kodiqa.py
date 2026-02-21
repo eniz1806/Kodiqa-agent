@@ -20,7 +20,7 @@ from config import (
     load_settings, save_settings, is_claude_model,
 )
 from memory import MemoryStore
-from actions import parse_actions, execute_action, execute_tool_call
+from actions import parse_actions, execute_action, execute_tool_call, execute_tools_parallel, set_console
 from tools import CLAUDE_TOOLS
 
 # Claude system prompt (more detailed since Claude can handle it)
@@ -45,11 +45,13 @@ CLAUDE_SYSTEM = """You are Kodiqa, an expert AI coding assistant running locally
 class Kodiqa:
     def __init__(self):
         self.console = Console()
+        set_console(self.console)  # share console with actions.py for diff display
         self.memory = MemoryStore()
         self.history = []
         self.cwd = os.getcwd()
         self.settings = load_settings()
         self.claude_key = self.settings.get("claude_api_key", "")
+        self.session_file = os.path.join(KODIQA_DIR, "session.json")
         if self.claude_key:
             self.model = self.settings.get("default_model", "claude-sonnet-4-20250514")
         else:
@@ -58,6 +60,7 @@ class Kodiqa:
     def run(self):
         self._first_run_setup()
         self._detect_git()
+        self._load_session()
         self._welcome()
         try:
             while True:
@@ -150,6 +153,60 @@ class Kodiqa:
             lines.append(f"- Recent commits:\n```\n{g['recent_commits']}\n```")
         return "\n".join(lines)
 
+    # ── Session save/load for conversation recovery ──
+
+    def _save_session(self):
+        """Auto-save conversation to disk for recovery."""
+        try:
+            # Only save string-content messages (skip complex tool_use blocks for simplicity)
+            saveable = []
+            for msg in self.history:
+                if isinstance(msg.get("content"), str):
+                    saveable.append(msg)
+            data = {"model": self.model, "cwd": self.cwd, "history": saveable}
+            with open(self.session_file, "w") as f:
+                json.dump(data, f)
+        except Exception:
+            pass
+
+    def _load_session(self):
+        """Offer to resume previous session if it exists."""
+        if not os.path.isfile(self.session_file):
+            return
+        try:
+            with open(self.session_file, "r") as f:
+                data = json.load(f)
+            history = data.get("history", [])
+            if len(history) < 2:
+                os.remove(self.session_file)
+                return
+            msg_count = len([m for m in history if m.get("role") == "user"])
+            self.console.print(f"[dim]Previous session found ({msg_count} messages). Resume? (y/n)[/]")
+            try:
+                answer = Prompt.ask("Resume", choices=["y", "n"], default="y")
+                if answer.lower() == "y":
+                    self.history = history
+                    self.model = data.get("model", self.model)
+                    saved_cwd = data.get("cwd", self.cwd)
+                    if os.path.isdir(saved_cwd):
+                        self.cwd = saved_cwd
+                        os.chdir(self.cwd)
+                    self.console.print("[green]Session restored.[/]")
+                else:
+                    os.remove(self.session_file)
+            except (EOFError, KeyboardInterrupt):
+                os.remove(self.session_file)
+        except Exception:
+            pass
+
+    def _clear_session(self):
+        """Remove saved session file."""
+        try:
+            if os.path.isfile(self.session_file):
+                os.remove(self.session_file)
+        except Exception:
+            pass
+
     def _get_project_context_path(self):
         safe_name = self.cwd.strip("/").replace("/", "-")
         return os.path.join(KODIQA_DIR, "projects", f"{safe_name}.md")
@@ -191,8 +248,9 @@ class Kodiqa:
         ))
 
     def _quit(self):
+        self._save_session()
         self.memory.close()
-        self.console.print("\n[dim]Goodbye![/]")
+        self.console.print("\n[dim]Goodbye! Session saved.[/]")
 
     def _handle_slash(self, cmd):
         parts = cmd.split(None, 1)
@@ -244,6 +302,7 @@ class Kodiqa:
             self._list_models()
         elif command == "/clear":
             self.history = []
+            self._clear_session()
             self.console.print("[dim]Conversation cleared.[/]")
         elif command == "/memories":
             result = self.memory.list_all()
@@ -458,6 +517,7 @@ class Kodiqa:
 
             actions = parse_actions(assistant_text)
             if not actions:
+                self._save_session()
                 break
             results = []
             for action in actions:
@@ -513,24 +573,57 @@ class Kodiqa:
             self.history.append({"role": "assistant", "content": assistant_content})
 
             if not tool_calls:
+                self._save_session()
                 break  # No tools = done
 
-            # Execute tools and build tool results
-            tool_results = []
-            for tc in tool_calls:
+            # Execute tools - parallel for read-only, sequential for writes
+            if len(tool_calls) > 1:
+                self.console.print(f"  [dim]Running {len(tool_calls)} tools in parallel...[/]")
+                results_list = execute_tools_parallel(tool_calls, self.memory, self._confirm)
+                for tc_id, result in results_list:
+                    tc_name = next((tc["name"] for tc in tool_calls if tc["id"] == tc_id), "?")
+                    self.console.print(f"  [dim]→ {tc_name}[/] [green]✓[/]")
+            else:
+                results_list = []
+                tc = tool_calls[0]
                 self.console.print(f"  [dim]→ {tc['name']}[/]", end="")
                 result = execute_tool_call(tc["name"], tc["input"], self.memory, self._confirm)
                 if len(result) > 20000:
                     result = result[:20000] + "\n... (truncated)"
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": tc["id"],
-                    "content": result,
-                })
+                results_list.append((tc["id"], result))
                 self.console.print(f" [green]✓[/]")
 
-            # Add tool results as user message (Claude API format)
+            # Build tool results - handle images specially for Claude vision
+            tool_results = []
+            for tc_id, result in results_list:
+                if result.startswith("__IMAGE__:"):
+                    # Parse image data for Claude vision
+                    parts = result.split(":", 2)
+                    media_type = parts[1]
+                    b64_data = parts[2]
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": tc_id,
+                        "content": [
+                            {
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": media_type,
+                                    "data": b64_data,
+                                }
+                            }
+                        ],
+                    })
+                else:
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": tc_id,
+                        "content": result,
+                    })
+
             self.history.append({"role": "user", "content": tool_results})
+            self._save_session()
 
             if iteration < MAX_ITERATIONS - 1:
                 self.console.print(f"  [dim]({iteration + 1}/{MAX_ITERATIONS} iterations)[/]")
