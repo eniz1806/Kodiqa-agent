@@ -567,19 +567,30 @@ class Kodiqa:
                 except Exception as e:
                     results[model_name] = f"Error: {e}"
 
-        # Display results in order
+        # Display individual results
         for model_name in self.multi_models:
             response = results.get(model_name, "No response")
             is_claude = is_claude_model(model_name)
             color = "yellow" if is_claude else "green"
-            # Short name for display
-            short = model_name.split(":")[0].split("-")[0] if not is_claude else model_name.replace("claude-", "").split("-")[0]
             self.console.print(Panel(
                 response,
                 title=f"[bold {color}]{model_name}[/]",
                 border_style=color,
             ))
             self.console.print()
+
+        # Consensus: pick the smartest available model to merge the best parts
+        self.console.print("[dim]Generating consensus from all answers...[/]\n")
+        consensus = self._generate_consensus(user_msg, results)
+        self.console.print(Panel(
+            consensus,
+            title="[bold magenta]Final Answer (consensus)[/]",
+            border_style="magenta",
+        ))
+        # Save consensus to history
+        self.history.append({"role": "user", "content": user_msg})
+        self.history.append({"role": "assistant", "content": consensus})
+        self._save_session()
 
     def _multi_query_ollama(self, model_name, user_msg, memories_ctx, context_file_ctx):
         """Non-streaming Ollama query for multi-model mode."""
@@ -628,6 +639,62 @@ class Kodiqa:
             return resp.json().get("content", [{}])[0].get("text", "No response")
         except Exception as e:
             return f"Error: {e}"
+
+    def _generate_consensus(self, user_msg, results):
+        """Use the smartest available model to combine all answers into the best one."""
+        # Build the prompt with all model responses
+        answers_text = ""
+        for model_name, response in results.items():
+            answers_text += f"\n### {model_name}:\n{response}\n"
+
+        consensus_prompt = (
+            f"The user asked: \"{user_msg}\"\n\n"
+            f"Multiple AI models gave these answers:\n{answers_text}\n\n"
+            "Your job: Analyze all answers above. Combine the best, most accurate, and most complete parts "
+            "from each model into ONE final answer. If models disagree, go with the most correct one. "
+            "If one model has unique good insights the others missed, include them. "
+            "Write the final merged answer directly - don't mention the models or say 'Model X said...'. "
+            "Just give the best possible answer."
+        )
+
+        # Use Claude if available (smartest), otherwise use the largest local model
+        if self.claude_key:
+            try:
+                resp = requests.post(
+                    CLAUDE_API_URL,
+                    headers={
+                        "x-api-key": self.claude_key,
+                        "anthropic-version": "2023-06-01",
+                        "content-type": "application/json",
+                    },
+                    json={
+                        "model": "claude-sonnet-4-20250514",
+                        "max_tokens": 4096,
+                        "messages": [{"role": "user", "content": consensus_prompt}],
+                    },
+                    timeout=300,
+                )
+                resp.raise_for_status()
+                return resp.json().get("content", [{}])[0].get("text", "Could not generate consensus.")
+            except Exception:
+                pass  # fall through to local model
+
+        # Fallback: use the best local model for consensus
+        judge_model = "qwen2.5-coder:14b"  # best local model for analysis
+        try:
+            resp = requests.post(
+                f"{OLLAMA_URL}/api/chat",
+                json={
+                    "model": judge_model,
+                    "messages": [{"role": "user", "content": consensus_prompt}],
+                    "stream": False,
+                },
+                timeout=300,
+            )
+            resp.raise_for_status()
+            return resp.json().get("message", {}).get("content", "Could not generate consensus.")
+        except Exception as e:
+            return f"Consensus error: {e}"
 
     # ── Ollama chat (text-based actions) ──
 
