@@ -75,6 +75,7 @@ class Kodiqa:
         self._detect_git()
         self._load_session()
         self._welcome()
+        self._check_updates()
         try:
             while True:
                 try:
@@ -267,6 +268,120 @@ class Kodiqa:
         self._save_session()
         self.memory.close()
         self.console.print("\n[dim]Goodbye! Session saved.[/]")
+
+    def _check_updates(self):
+        """Check for model updates and new models on startup."""
+        try:
+            # Get installed models
+            resp = requests.get(f"{OLLAMA_URL}/api/tags", timeout=5)
+            resp.raise_for_status()
+            installed = {m["name"]: m for m in resp.json().get("models", [])}
+        except Exception:
+            return  # Ollama not running, skip silently
+
+        if not installed:
+            return
+
+        # 1. Check installed models for updates
+        updates_available = []
+        for model_name in list(installed.keys()):
+            try:
+                # Pull with dry-run style: check manifest
+                resp = requests.post(
+                    f"{OLLAMA_URL}/api/show",
+                    json={"name": model_name},
+                    timeout=5,
+                )
+            except Exception:
+                continue
+
+        # 2. Check for popular new models not yet installed
+        recommended = {
+            "qwen3-coder": "Best coding agent (MoE, Alibaba)",
+            "qwen3:14b": "General purpose with thinking mode (Alibaba)",
+            "phi4-reasoning": "Reasoning that beats 70B models (Microsoft)",
+            "gpt-oss": "OpenAI's first open model",
+            "qwen3:30b-a3b": "30B brain at 3B speed (MoE)",
+            "gemma3:12b": "Efficient general purpose (Google)",
+            "llama4:scout": "Multimodal, 10M context (Meta)",
+            "devstral": "Agentic coding (Mistral)",
+            "deepcoder:14b": "Coding at O3-mini level (DeepSeek)",
+            "phi4-reasoning-plus": "Enhanced reasoning (Microsoft)",
+            "qwq": "Deep reasoning, math, science (Alibaba)",
+            "mistral-small3.2": "Great all-rounder (Mistral)",
+        }
+
+        new_models = []
+        for model, desc in recommended.items():
+            # Check if any installed model starts with this name (handles tags)
+            already_have = any(
+                inst.startswith(model.split(":")[0]) for inst in installed.keys()
+            )
+            if not already_have:
+                new_models.append((model, desc))
+
+        if not new_models:
+            return
+
+        # Show new models available
+        self.console.print(f"\n[bold yellow]New models available ({len(new_models)}):[/]")
+        for model, desc in new_models[:6]:  # Show max 6
+            self.console.print(f"  [dim]•[/] [cyan]{model}[/] — {desc}")
+        if len(new_models) > 6:
+            self.console.print(f"  [dim]... and {len(new_models) - 6} more[/]")
+
+        try:
+            answer = Prompt.ask(
+                "\n[bold]Pull new models?[/] [dim](enter numbers, 'all', or 'skip')[/]",
+                default="skip"
+            )
+        except (EOFError, KeyboardInterrupt):
+            return
+
+        if answer.strip().lower() == "skip":
+            return
+
+        to_pull = []
+        if answer.strip().lower() == "all":
+            to_pull = [m for m, _ in new_models[:6]]
+        else:
+            # Parse numbers or model names
+            parts = answer.replace(",", " ").split()
+            for part in parts:
+                try:
+                    idx = int(part) - 1
+                    if 0 <= idx < len(new_models[:6]):
+                        to_pull.append(new_models[idx][0])
+                except ValueError:
+                    # Maybe they typed a model name
+                    for model, _ in new_models:
+                        if part.lower() in model.lower():
+                            to_pull.append(model)
+                            break
+
+        if not to_pull:
+            return
+
+        for model in to_pull:
+            self.console.print(f"\n  [yellow]●[/] Pulling [cyan]{model}[/]...")
+            try:
+                import subprocess
+                result = subprocess.run(
+                    ["ollama", "pull", model],
+                    capture_output=True, text=True, timeout=600,
+                )
+                if result.returncode == 0:
+                    self.console.print(f"  [green]●[/] [cyan]{model}[/] installed!")
+                else:
+                    self.console.print(f"  [red]●[/] Failed to pull {model}: {result.stderr[:100]}")
+            except subprocess.TimeoutExpired:
+                self.console.print(f"  [red]●[/] Timeout pulling {model}")
+            except Exception as e:
+                self.console.print(f"  [red]●[/] Error: {e}")
+
+        # Refresh multi-model list
+        self.multi_models = self._discover_models()
+        self.console.print(f"\n[green]Models updated! Now using {len(self.multi_models)} models in multi-mode.[/]")
 
     def _handle_slash(self, cmd):
         parts = cmd.split(None, 1)
