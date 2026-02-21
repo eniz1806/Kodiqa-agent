@@ -52,6 +52,7 @@ class Kodiqa:
         self.settings = load_settings()
         self.claude_key = self.settings.get("claude_api_key", "")
         self.session_file = os.path.join(KODIQA_DIR, "session.json")
+        self.multi_models = []  # empty = single mode, list = multi mode
         if self.claude_key:
             self.model = self.settings.get("default_model", "claude-sonnet-4-20250514")
         else:
@@ -266,6 +267,8 @@ class Kodiqa:
                 "[bold]/model <name>[/]  - Switch model\n"
                 "  [dim]Local: llama, qwen, coder, deepseek, dscoder[/]\n"
                 f"  [dim]Claude: claude, sonnet, haiku, opus ({claude_status})[/]\n"
+                "[bold]/multi <models>[/] - Multi-model mode (e.g. /multi coder qwen deepseek)\n"
+                "[bold]/single[/]        - Back to single model mode\n"
                 "[bold]/models[/]       - List all available models\n"
                 "[bold]/scan[/] [path]   - Scan project into context\n"
                 "[bold]/clear[/]         - Clear conversation\n"
@@ -298,6 +301,29 @@ class Kodiqa:
             self.model = new_model
             provider = "[yellow]Claude API[/]" if is_claude_model(self.model) else "[green]Local[/]"
             self.console.print(f"Switched to [cyan]{self.model}[/] ({provider})")
+        elif command == "/multi":
+            if not arg:
+                self.console.print("[red]Usage: /multi coder qwen deepseek[/]")
+                return
+            names = arg.split()
+            resolved = []
+            for name in names:
+                if name in CLAUDE_ALIASES:
+                    if not self.claude_key:
+                        self.console.print(f"[red]{name} needs Claude API key. Use /key to add one.[/]")
+                        return
+                    resolved.append(CLAUDE_ALIASES[name])
+                elif name in MODEL_ALIASES:
+                    resolved.append(MODEL_ALIASES[name])
+                else:
+                    resolved.append(name)
+            self.multi_models = resolved
+            names_str = ", ".join(f"[cyan]{m}[/]" for m in resolved)
+            self.console.print(f"Multi-model mode: {names_str}")
+            self.console.print("[dim]All models will answer each question. Use /single to go back.[/]")
+        elif command == "/single":
+            self.multi_models = []
+            self.console.print(f"Single model mode: [cyan]{self.model}[/]")
         elif command == "/models":
             self._list_models()
         elif command == "/clear":
@@ -490,10 +516,103 @@ class Kodiqa:
 
     def _chat(self, user_msg):
         self._auto_compact_if_needed()
-        if is_claude_model(self.model):
+        if self.multi_models:
+            self._chat_multi(user_msg)
+        elif is_claude_model(self.model):
             self._chat_claude(user_msg)
         else:
             self._chat_ollama(user_msg)
+
+    # ── Multi-model chat ──
+
+    def _chat_multi(self, user_msg):
+        """Send message to all selected models and show each response."""
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        memories_ctx = self.memory.get_context()
+        context_file_ctx = self._load_context_file()
+
+        def query_model(model_name):
+            """Query a single model (no streaming, no tools - just chat)."""
+            if is_claude_model(model_name):
+                return self._multi_query_claude(model_name, user_msg, memories_ctx, context_file_ctx)
+            else:
+                return self._multi_query_ollama(model_name, user_msg, memories_ctx, context_file_ctx)
+
+        self.console.print(f"\n[dim]Querying {len(self.multi_models)} models...[/]\n")
+
+        # Run all models in parallel
+        results = {}
+        with ThreadPoolExecutor(max_workers=len(self.multi_models)) as executor:
+            futures = {executor.submit(query_model, m): m for m in self.multi_models}
+            for future in as_completed(futures):
+                model_name = futures[future]
+                try:
+                    results[model_name] = future.result()
+                except Exception as e:
+                    results[model_name] = f"Error: {e}"
+
+        # Display results in order
+        for model_name in self.multi_models:
+            response = results.get(model_name, "No response")
+            is_claude = is_claude_model(model_name)
+            color = "yellow" if is_claude else "green"
+            # Short name for display
+            short = model_name.split(":")[0].split("-")[0] if not is_claude else model_name.replace("claude-", "").split("-")[0]
+            self.console.print(Panel(
+                response,
+                title=f"[bold {color}]{model_name}[/]",
+                border_style=color,
+            ))
+            self.console.print()
+
+    def _multi_query_ollama(self, model_name, user_msg, memories_ctx, context_file_ctx):
+        """Non-streaming Ollama query for multi-model mode."""
+        system_prompt = SYSTEM_PROMPT.format(cwd=self.cwd, model=model_name, memories=memories_ctx)
+        if context_file_ctx:
+            system_prompt += "\n\n" + context_file_ctx
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_msg},
+        ]
+        try:
+            resp = requests.post(
+                f"{OLLAMA_URL}/api/chat",
+                json={"model": model_name, "messages": messages, "stream": False},
+                timeout=300,
+            )
+            resp.raise_for_status()
+            return resp.json().get("message", {}).get("content", "No response")
+        except Exception as e:
+            return f"Error: {e}"
+
+    def _multi_query_claude(self, model_name, user_msg, memories_ctx, context_file_ctx):
+        """Non-streaming Claude query for multi-model mode."""
+        if not self.claude_key:
+            return "No API key"
+        system_prompt = CLAUDE_SYSTEM.format(cwd=self.cwd, model=model_name, memories=memories_ctx)
+        if context_file_ctx:
+            system_prompt += "\n\n" + context_file_ctx
+        try:
+            resp = requests.post(
+                CLAUDE_API_URL,
+                headers={
+                    "x-api-key": self.claude_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": model_name,
+                    "max_tokens": 4096,
+                    "system": system_prompt,
+                    "messages": [{"role": "user", "content": user_msg}],
+                },
+                timeout=300,
+            )
+            resp.raise_for_status()
+            return resp.json().get("content", [{}])[0].get("text", "No response")
+        except Exception as e:
+            return f"Error: {e}"
 
     # ── Ollama chat (text-based actions) ──
 
