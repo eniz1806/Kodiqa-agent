@@ -12,7 +12,7 @@ from config import (
     CONFIRM_ACTIONS, BLOCKED_COMMANDS, COMMAND_TIMEOUT,
     MAX_FILE_SIZE, SKIP_DIRS, SKIP_EXTENSIONS,
 )
-from web import search_duckduckgo, fetch_page, format_results
+from web import web_search, fetch_page, format_results
 
 # ── Console reference (set by kodiqa.py on startup) ──
 _console = None
@@ -449,7 +449,7 @@ def do_run_command(command):
 def do_web_search(query):
     if not query.strip():
         return "No search query provided."
-    results = search_duckduckgo(query)
+    results = web_search(query)
     return format_results(results)
 
 

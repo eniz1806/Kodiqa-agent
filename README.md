@@ -30,6 +30,8 @@ source ~/LLMS/kodiqa/venv/bin/activate && python ~/LLMS/kodiqa/kodiqa.py
 | `/compact` | Summarize conversation to save context window |
 | `/context` | Show project context file |
 | `/key` | Add/update/remove Claude API key |
+| `/search google` | Switch to Google search |
+| `/search duckduckgo` | Switch to DuckDuckGo (default) |
 | `/cd <path>` | Change working directory |
 | `/help` | Show help |
 | `/quit` | Exit (or press Ctrl+C) |

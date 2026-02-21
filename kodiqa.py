@@ -23,6 +23,7 @@ from config import (
 )
 from memory import MemoryStore
 from actions import parse_actions, execute_action, execute_tool_call, execute_tools_parallel, set_console
+from web import set_search_engine, get_search_engine
 from tools import CLAUDE_TOOLS
 
 # Claude system prompt (more detailed since Claude can handle it)
@@ -422,6 +423,7 @@ class Kodiqa:
                 "[bold]/compact[/]       - Summarize conversation to save context\n"
                 "[bold]/context[/]       - Show project context file\n"
                 "[bold]/key[/]           - Add/update Claude API key\n"
+                "[bold]/search[/]        - Switch search engine (google/duckduckgo)\n"
                 "[bold]/cd <path>[/]     - Change working directory\n"
                 "[bold]/quit[/]          - Exit",
                 title="Commands", border_style="blue",
@@ -537,6 +539,19 @@ class Kodiqa:
                 self.console.print(f"[dim]Changed to {self.cwd}{git_note}[/]")
             else:
                 self.console.print(f"[red]Not a directory: {path}[/]")
+        elif command == "/search":
+            if not arg:
+                engine = get_search_engine()
+                self.console.print(f"Search engine: [cyan]{engine}[/]")
+                self.console.print("[dim]Usage: /search google  or  /search duckduckgo[/]")
+            elif arg.lower() in ("google", "g"):
+                set_search_engine("google")
+                self.console.print("[green]Switched to Google search[/]")
+            elif arg.lower() in ("duckduckgo", "ddg", "duck"):
+                set_search_engine("duckduckgo")
+                self.console.print("[green]Switched to DuckDuckGo search[/]")
+            else:
+                self.console.print("[red]Unknown engine. Use: /search google  or  /search duckduckgo[/]")
         else:
             self.console.print(f"[red]Unknown command: {command}. Type /help[/]")
 
