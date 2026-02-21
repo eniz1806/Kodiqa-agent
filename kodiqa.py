@@ -347,10 +347,8 @@ class Kodiqa:
 
         # Show new models available
         self.console.print(f"\n[bold yellow]New models available ({len(new_models)}):[/]")
-        for model, desc in new_models[:6]:  # Show max 6
-            self.console.print(f"  [dim]•[/] [cyan]{model}[/] — {desc}")
-        if len(new_models) > 6:
-            self.console.print(f"  [dim]... and {len(new_models) - 6} more[/]")
+        for i, (model, desc) in enumerate(new_models, 1):
+            self.console.print(f"  [cyan bold]{i}.[/] [cyan]{model}[/] — {desc}")
 
         try:
             answer = Prompt.ask(
@@ -365,14 +363,14 @@ class Kodiqa:
 
         to_pull = []
         if answer.strip().lower() == "all":
-            to_pull = [m for m, _ in new_models[:6]]
+            to_pull = [m for m, _ in new_models]
         else:
             # Parse numbers or model names
             parts = answer.replace(",", " ").split()
             for part in parts:
                 try:
                     idx = int(part) - 1
-                    if 0 <= idx < len(new_models[:6]):
+                    if 0 <= idx < len(new_models):
                         to_pull.append(new_models[idx][0])
                 except ValueError:
                     # Maybe they typed a model name
