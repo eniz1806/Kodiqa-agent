@@ -10,8 +10,10 @@ warnings.filterwarnings("ignore", message=".*urllib3.*")
 
 import requests
 from rich.console import Console
+from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.prompt import Prompt
+from rich.status import Status
 
 from config import (
     OLLAMA_URL, DEFAULT_MODEL, MODEL_ALIASES, CLAUDE_ALIASES,
@@ -744,12 +746,13 @@ class Kodiqa:
                 break
             results = []
             for action in actions:
-                self.console.print(f"  [dim]→ {action['name']}[/]", end="")
-                result = execute_action(action, self.memory, self._confirm)
-                if len(result) > 20000:
-                    result = result[:20000] + "\n... (truncated)"
-                results.append(f"[Result of {action['name']}]\n{result}")
-                self.console.print(f" [green]✓[/]")
+                action_label = _tool_label(action['name'], action.get('params', {}))
+                with Status(f"  [yellow]●[/] {action_label}", console=self.console, spinner="dots"):
+                    result = execute_action(action, self.memory, self._confirm)
+                    if len(result) > 20000:
+                        result = result[:20000] + "\n... (truncated)"
+                    results.append(f"[Result of {action['name']}]\n{result}")
+                self.console.print(f"  [green]●[/] {action_label}")
             self.history.append({"role": "user", "content": f"[Action Results]\n" + "\n\n".join(results)})
             if iteration < MAX_ITERATIONS - 1:
                 self.console.print(f"  [dim]({iteration + 1}/{MAX_ITERATIONS} iterations)[/]")
@@ -801,20 +804,22 @@ class Kodiqa:
 
             # Execute tools - parallel for read-only, sequential for writes
             if len(tool_calls) > 1:
-                self.console.print(f"  [dim]Running {len(tool_calls)} tools in parallel...[/]")
-                results_list = execute_tools_parallel(tool_calls, self.memory, self._confirm)
+                with Status(f"  [yellow]●[/] Running {len(tool_calls)} tools...", console=self.console, spinner="dots"):
+                    results_list = execute_tools_parallel(tool_calls, self.memory, self._confirm)
                 for tc_id, result in results_list:
                     tc_name = next((tc["name"] for tc in tool_calls if tc["id"] == tc_id), "?")
-                    self.console.print(f"  [dim]→ {tc_name}[/] [green]✓[/]")
+                    tc_input = next((tc.get("input", {}) for tc in tool_calls if tc["id"] == tc_id), {})
+                    self.console.print(f"  [green]●[/] {_tool_label(tc_name, tc_input)}")
             else:
                 results_list = []
                 tc = tool_calls[0]
-                self.console.print(f"  [dim]→ {tc['name']}[/]", end="")
-                result = execute_tool_call(tc["name"], tc["input"], self.memory, self._confirm)
-                if len(result) > 20000:
-                    result = result[:20000] + "\n... (truncated)"
-                results_list.append((tc["id"], result))
-                self.console.print(f" [green]✓[/]")
+                label = _tool_label(tc['name'], tc.get('input', {}))
+                with Status(f"  [yellow]●[/] {label}", console=self.console, spinner="dots"):
+                    result = execute_tool_call(tc["name"], tc["input"], self.memory, self._confirm)
+                    if len(result) > 20000:
+                        result = result[:20000] + "\n... (truncated)"
+                    results_list.append((tc["id"], result))
+                self.console.print(f"  [green]●[/] {label}")
 
             # Build tool results - handle images specially for Claude vision
             tool_results = []
@@ -923,13 +928,15 @@ class Kodiqa:
 
         # Parse streaming response
         self.console.print()
-        self.console.print("[bold yellow]Kodiqa[/] ", end="")
 
         full_text = []
         tool_calls = []
         current_tool = None
         current_tool_json = []
         stop_reason = "end_turn"
+        first_token = True
+        thinking_status = Status("  [dim]Thinking...[/]", console=self.console, spinner="dots")
+        thinking_status.start()
 
         try:
             for line in resp.iter_lines():
@@ -951,15 +958,21 @@ class Kodiqa:
                 if event_type == "content_block_start":
                     block = event.get("content_block", {})
                     if block.get("type") == "tool_use":
+                        if first_token:
+                            thinking_status.stop()
+                            first_token = False
                         current_tool = {"id": block["id"], "name": block["name"], "input": {}}
                         current_tool_json = []
-                        self.console.print(f"\n  [dim]🔧 {block['name']}[/]", end="")
 
                 elif event_type == "content_block_delta":
                     delta = event.get("delta", {})
                     if delta.get("type") == "text_delta":
                         token = delta.get("text", "")
                         if token:
+                            if first_token:
+                                thinking_status.stop()
+                                self.console.print("[bold green]Kodiqa[/] ", end="")
+                                first_token = False
                             full_text.append(token)
                             sys.stdout.write(token)
                             sys.stdout.flush()
@@ -983,12 +996,16 @@ class Kodiqa:
                     stop_reason = event.get("delta", {}).get("stop_reason", stop_reason)
 
                 elif event_type == "error":
+                    thinking_status.stop()
                     err = event.get("error", {})
                     self.console.print(f"\n[red]Claude error: {err.get('message', 'Unknown')}[/]")
 
         except KeyboardInterrupt:
+            thinking_status.stop()
             self.console.print("\n[dim](interrupted)[/]")
 
+        if first_token:
+            thinking_status.stop()
         self.console.print()
         return {"text": "".join(full_text), "tool_calls": tool_calls, "stop_reason": stop_reason}
 
@@ -1033,7 +1050,9 @@ class Kodiqa:
 
         self.console.print()
         full_text = []
-        self.console.print("[bold green]Kodiqa[/] ", end="")
+        first_token = True
+        thinking_status = Status("  [dim]Thinking...[/]", console=self.console, spinner="dots")
+        thinking_status.start()
         try:
             for line in resp.iter_lines():
                 if not line:
@@ -1046,11 +1065,18 @@ class Kodiqa:
                     break
                 token = chunk.get("message", {}).get("content", "")
                 if token:
+                    if first_token:
+                        thinking_status.stop()
+                        self.console.print("[bold green]Kodiqa[/] ", end="")
+                        first_token = False
                     full_text.append(token)
                     sys.stdout.write(token)
                     sys.stdout.flush()
         except KeyboardInterrupt:
+            thinking_status.stop()
             self.console.print("\n[dim](interrupted)[/]")
+        if first_token:
+            thinking_status.stop()
         self.console.print()
         return "".join(full_text)
 
@@ -1063,6 +1089,53 @@ class Kodiqa:
             return answer.lower() == "y"
         except (EOFError, KeyboardInterrupt):
             return False
+
+
+def _tool_label(name, params):
+    """Create a human-readable label for a tool action."""
+    p = params or {}
+    labels = {
+        "read_file": lambda: f"Read [cyan]{_short_path(p.get('path', '?'))}[/]",
+        "write_file": lambda: f"Write [cyan]{_short_path(p.get('path', '?'))}[/]",
+        "edit_file": lambda: f"Edit [cyan]{_short_path(p.get('path', p.get('old_string', '?')[:30]))}[/]",
+        "list_dir": lambda: f"List [cyan]{_short_path(p.get('path', '?'))}[/]",
+        "tree": lambda: f"Tree [cyan]{_short_path(p.get('path', '?'))}[/]",
+        "glob": lambda: f"Find [cyan]{p.get('pattern', '?')}[/]",
+        "grep": lambda: f"Search [cyan]{p.get('pattern', '?')}[/]",
+        "run_command": lambda: f"Run [cyan]{p.get('command', '?')[:50]}[/]",
+        "web_search": lambda: f"Search web [cyan]{p.get('query', '?')[:40]}[/]",
+        "web_fetch": lambda: f"Fetch [cyan]{p.get('url', '?')[:50]}[/]",
+        "git_status": lambda: "Git status",
+        "git_diff": lambda: f"Git diff {p.get('args', '')}".strip(),
+        "git_commit": lambda: f"Git commit [cyan]{p.get('message', '?')[:40]}[/]",
+        "memory_store": lambda: f"Remember [cyan]{p.get('content', '?')[:40]}[/]",
+        "memory_search": lambda: f"Recall [cyan]{p.get('query', '?')}[/]",
+        "read_image": lambda: f"View image [cyan]{_short_path(p.get('path', '?'))}[/]",
+        "read_pdf": lambda: f"Read PDF [cyan]{_short_path(p.get('path', '?'))}[/]",
+        "ask_user": lambda: f"Ask user",
+    }
+    fn = labels.get(name)
+    if fn:
+        try:
+            return fn()
+        except Exception:
+            pass
+    return name
+
+
+def _short_path(path):
+    """Shorten a path for display."""
+    if not path or path == "?":
+        return "?"
+    home = os.path.expanduser("~")
+    if path.startswith(home):
+        path = "~" + path[len(home):]
+    # Show only last 2 parts if too long
+    if len(path) > 60:
+        parts = path.split("/")
+        if len(parts) > 3:
+            path = ".../" + "/".join(parts[-2:])
+    return path
 
 
 def main():
