@@ -304,16 +304,25 @@ class Kodiqa:
                 return
             if arg in CLAUDE_ALIASES:
                 if not self.claude_key:
-                    self.console.print("[red]No Claude API key set. Use /key to add one.[/]")
-                    return
+                    self.console.print("[yellow]No Claude API key set.[/]")
+                    key = Prompt.ask("[bold]Enter your Claude API key[/] (or 'skip' to cancel)")
+                    if key.strip().lower() == "skip" or not key.strip():
+                        self.console.print("[dim]Cancelled. Staying on current model.[/]")
+                        return
+                    self.claude_key = key.strip()
+                    self.settings["claude_api_key"] = self.claude_key
+                    save_settings(self.settings)
+                    self.console.print("[green]API key saved![/]")
                 new_model = CLAUDE_ALIASES[arg]
             elif arg in MODEL_ALIASES:
                 new_model = MODEL_ALIASES[arg]
             else:
                 new_model = arg
             self.model = new_model
+            self.multi_models = []  # switch to single mode
             provider = "[yellow]Claude API[/]" if is_claude_model(self.model) else "[green]Local[/]"
-            self.console.print(f"Switched to [cyan]{self.model}[/] ({provider})")
+            self.console.print(f"Switched to [cyan]{self.model}[/] ({provider}) [dim](single mode)[/]")
+            self.console.print("[dim]Use /multi all to go back to multi-model mode[/]")
         elif command == "/multi":
             if not arg:
                 self.console.print("[red]Usage: /multi coder qwen reason  or  /multi all[/]")
