@@ -263,4 +263,23 @@ CLAUDE_TOOLS = [
             "required": ["path"]
         }
     },
+    {
+        "name": "ask_user",
+        "description": "Ask the user a question to clarify requirements, get preferences, or choose between options. Use this before making assumptions. Presents options the user can pick from.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "question": {
+                    "type": "string",
+                    "description": "The question to ask the user"
+                },
+                "options": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional list of choices for the user to pick from"
+                }
+            },
+            "required": ["question"]
+        }
+    },
 ]

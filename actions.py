@@ -152,7 +152,7 @@ def execute_tools_parallel(tool_calls, memory, confirm_fn):
     """Execute multiple tool calls in parallel where safe. Returns list of (id, result)."""
     # Separate into safe-to-parallel (read-only) and sequential (needs confirm or writes)
     read_only = {"read_file", "list_dir", "tree", "glob", "grep", "git_status", "git_diff",
-                 "web_search", "web_fetch", "memory_search"}
+                 "web_search", "web_fetch", "memory_search", "ask_user"}
 
     parallel_batch = []
     sequential_batch = []
@@ -226,6 +226,7 @@ def _dispatch(name, p, memory):
         "memory_search": lambda: memory.search(p.get("query", "")),
         "read_image": lambda: do_read_image(p.get("path", "")),
         "read_pdf": lambda: do_read_pdf(p.get("path", "")),
+        "ask_user": lambda: do_ask_user(p.get("question", ""), _parse_options(p.get("options", []))),
     }
     handler = handlers.get(name)
     if handler:
@@ -556,3 +557,42 @@ def do_read_pdf(path):
     except Exception:
         pass
     return f"Could not extract text from {path}. Install pdftotext: brew install poppler"
+
+
+def _parse_options(options):
+    """Parse options from either a list (Claude) or comma-separated string (Ollama)."""
+    if isinstance(options, list):
+        return options
+    if isinstance(options, str) and options.strip():
+        return [o.strip() for o in options.split(",") if o.strip()]
+    return []
+
+
+def do_ask_user(question, options=None):
+    """Ask the user a question and return their answer."""
+    if not question.strip():
+        return "No question provided."
+    if _console:
+        _console.print(f"\n[bold yellow]Question:[/] {question}")
+        if options and isinstance(options, list) and len(options) > 0:
+            for i, opt in enumerate(options, 1):
+                _console.print(f"  [cyan]{i}.[/] {opt}")
+            _console.print(f"  [dim]{len(options) + 1}. Other (type your own answer)[/]")
+            from rich.prompt import Prompt
+            choice = Prompt.ask("[bold]Your choice[/]")
+            # Check if they picked a number
+            try:
+                idx = int(choice)
+                if 1 <= idx <= len(options):
+                    answer = options[idx - 1]
+                    _console.print(f"  [green]Selected: {answer}[/]")
+                    return f"User selected: {answer}"
+            except ValueError:
+                pass
+            # They typed a custom answer
+            return f"User answered: {choice}"
+        else:
+            from rich.prompt import Prompt
+            answer = Prompt.ask("[bold]Your answer[/]")
+            return f"User answered: {answer}"
+    return "Could not ask user (no console available)."

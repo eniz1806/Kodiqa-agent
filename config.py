@@ -165,6 +165,12 @@ tags: optional tags
 query: search terms
 [/ACTION]
 
+### Ask User
+[ACTION: ask_user]
+question: What framework do you want to use?
+options: React, Vue, Angular, Svelte
+[/ACTION]
+
 ## Rules
 1. Always read a file before editing it
 2. Use glob/grep to find files before assuming paths
