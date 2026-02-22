@@ -56,6 +56,7 @@ class Kodiqa:
         self.claude_key = self.settings.get("claude_api_key", "")
         self.session_file = os.path.join(KODIQA_DIR, "session.json")
         self.multi_models = self._discover_models()  # default: multi-model mode
+        self._started_ollama = False  # track if we started Ollama (to stop on quit)
         # Load Google API keys if saved
         g_key = self.settings.get("google_api_key", "")
         g_cx = self.settings.get("google_cx", "")
@@ -274,7 +275,19 @@ class Kodiqa:
     def _quit(self):
         self._save_session()
         self.memory.close()
-        self.console.print("\n[dim]Goodbye! Session saved.[/]")
+        if self._started_ollama:
+            import subprocess
+            try:
+                subprocess.run([OLLAMA_BIN, "stop"], capture_output=True, timeout=5)
+            except Exception:
+                pass
+            # Kill the serve process we started
+            try:
+                subprocess.run(["pkill", "-f", "ollama serve"], capture_output=True, timeout=5)
+            except Exception:
+                pass
+            self.console.print("\n[green]●[/] Ollama stopped")
+        self.console.print("[dim]Goodbye! Session saved.[/]")
 
     def _ensure_ollama(self):
         """Make sure Ollama is running, start it if not."""
@@ -299,6 +312,7 @@ class Kodiqa:
                 try:
                     requests.get(f"{OLLAMA_URL}/api/tags", timeout=2)
                     self.console.print("[green]●[/] Ollama started")
+                    self._started_ollama = True
                     return True
                 except Exception:
                     continue
