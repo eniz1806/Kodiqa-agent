@@ -30,8 +30,9 @@ source ~/LLMS/kodiqa/venv/bin/activate && python ~/LLMS/kodiqa/kodiqa.py
 | `/compact` | Summarize conversation to save context window |
 | `/context` | Show project context file |
 | `/key` | Add/update/remove Claude API key |
-| `/search google` | Switch to Google search |
-| `/search duckduckgo` | Switch to DuckDuckGo (default) |
+| `/search duckduckgo` | Switch to DuckDuckGo (default, free, unlimited) |
+| `/search google` | Switch to Google scraping (free, no key) |
+| `/search api` | Switch to Google API (100/day free, needs key) |
 | `/cd <path>` | Change working directory |
 | `/help` | Show help |
 | `/quit` | Exit (or press Ctrl+C) |
@@ -209,14 +210,14 @@ Clean UI with animated spinners and colored dots:
   actions.py         # 19 action handlers with diff view (~600 lines)
   tools.py           # Claude native tool schemas (~300 lines)
   memory.py          # Persistent memory - SQLite
-  web.py             # DuckDuckGo search + page fetch
+  web.py             # Web search (DuckDuckGo + Google + Google API) + page fetch
   config.py          # Models, prompts, settings
   requirements.txt   # Dependencies
   venv/              # Python virtual environment
 
 ~/.kodiqa/
   memory.db          # Your memories (persists across sessions)
-  settings.json      # API keys, default model
+  settings.json      # API keys (Claude, Google), default model
   session.json       # Auto-saved conversation for recovery
   KODIQA.md          # Global context (always loaded)
   projects/          # Per-project context files (not in your repos)
