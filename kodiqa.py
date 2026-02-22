@@ -3,6 +3,7 @@
 
 import json
 import os
+import readline
 import sys
 import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -56,6 +57,13 @@ class Kodiqa:
         self.claude_key = self.settings.get("claude_api_key", "")
         self.session_file = os.path.join(KODIQA_DIR, "session.json")
         self.multi_models = self._discover_models()  # default: multi-model mode
+        # Setup readline for arrow keys + input history
+        self._history_file = os.path.join(KODIQA_DIR, "input_history")
+        try:
+            readline.read_history_file(self._history_file)
+        except FileNotFoundError:
+            pass
+        readline.set_history_length(500)
         # Load Google API keys if saved
         g_key = self.settings.get("google_api_key", "")
         g_cx = self.settings.get("google_cx", "")
@@ -86,7 +94,8 @@ class Kodiqa:
         try:
             while True:
                 try:
-                    user_input = Prompt.ask("\n[bold cyan]You[/]")
+                    self.console.print()
+                    user_input = input("\033[1;36mYou: \033[0m")
                 except (EOFError, KeyboardInterrupt):
                     self._quit()
                     return
@@ -274,6 +283,10 @@ class Kodiqa:
     def _quit(self):
         self._save_session()
         self.memory.close()
+        try:
+            readline.write_history_file(self._history_file)
+        except Exception:
+            pass
         # Always stop Ollama on quit — no need to leave it running
         import subprocess
         try:
