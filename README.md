@@ -184,11 +184,18 @@ When conversation gets too long (~80K tokens), Kodiqa automatically summarizes i
 ### Multi-Model Consensus (Default)
 On startup, Kodiqa auto-discovers all installed Ollama models and enables multi-model mode. Every question goes to all models **sequentially** (one at a time to save RAM), each answers independently, then a judge model merges the best parts into a single consensus answer. Models are unloaded from RAM immediately after responding (`keep_alive: 0`), so even 5 large models work fine on 24GB RAM. Use `/single` or `/model <name>` to switch to single model when needed.
 
+### Ollama Auto-Start & Stop
+Kodiqa manages Ollama automatically:
+- **On startup**: starts Ollama if not already running
+- **On quit** (`/quit` or Ctrl+C): stops Ollama to free resources
+- No background processes left running after you're done
+
 ### Auto-Update & Model Discovery
 On every startup, Kodiqa automatically:
-1. **Checks installed models for updates** — runs `ollama pull` on each model (only downloads if there's a patch, skips if up to date)
-2. **Discovers new recommended models** — shows models you don't have yet with descriptions
-3. **Asks before pulling** — pick by number, type `all`, or `skip`
+1. **Starts Ollama** if not running
+2. **Checks installed models for updates** — runs `ollama pull` on each model (only downloads if there's a patch, skips if up to date)
+3. **Discovers new recommended models** — shows models you don't have yet with descriptions
+4. **Asks before pulling** — pick by number, type `all`, or `skip`
 
 New models are automatically added to multi-model mode after pulling.
 
@@ -219,6 +226,7 @@ Clean UI with animated spinners and colored dots:
   memory.db          # Your memories (persists across sessions)
   settings.json      # API keys (Claude, Google), default model
   session.json       # Auto-saved conversation for recovery
+  input_history      # Arrow-key input history (last 500 commands)
   KODIQA.md          # Global context (always loaded)
   projects/          # Per-project context files (not in your repos)
 ```
@@ -236,11 +244,13 @@ Clean UI with animated spinners and colored dots:
 - Use `/compact` when the conversation gets long and responses slow down
 - Memories persist forever - Kodiqa remembers across sessions
 - You can run any shell command through Kodiqa (it will ask permission first)
+- Arrow keys work: up/down for history, left/right to edit — history persists across sessions
 - Sessions auto-save - just restart if anything goes wrong
+- Ollama starts and stops automatically — no manual management needed
 
 ## Requirements
 
 - Python 3.9+
-- Ollama running for local models (`ollama serve`)
+- Ollama installed (`/Applications/Ollama.app` on macOS)
 - At least one model pulled (`ollama pull qwen3-coder`)
 - (Optional) Claude API key for smart mode
