@@ -4,6 +4,7 @@ import json
 import os
 
 OLLAMA_URL = "http://localhost:11434"
+OLLAMA_BIN = "/Applications/Ollama.app/Contents/Resources/ollama"
 DEFAULT_MODEL = "qwen3-coder"
 
 # Local Ollama models

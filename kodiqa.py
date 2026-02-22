@@ -16,7 +16,7 @@ from rich.prompt import Prompt
 from rich.status import Status
 
 from config import (
-    OLLAMA_URL, DEFAULT_MODEL, MODEL_ALIASES, CLAUDE_ALIASES,
+    OLLAMA_URL, OLLAMA_BIN, DEFAULT_MODEL, MODEL_ALIASES, CLAUDE_ALIASES,
     CLAUDE_API_URL, CONTEXT_FILE, KODIQA_DIR,
     MAX_ITERATIONS, SYSTEM_PROMPT, SKIP_DIRS, SKIP_EXTENSIONS, MAX_FILE_SIZE,
     load_settings, save_settings, is_claude_model,
@@ -298,7 +298,7 @@ class Kodiqa:
             try:
                 with Status(f"  [dim]Checking {model_name}...[/]", console=self.console, spinner="dots"):
                     result = subprocess.run(
-                        ["ollama", "pull", model_name],
+                        [OLLAMA_BIN, "pull", model_name],
                         capture_output=True, text=True, timeout=120,
                     )
                 output = result.stdout + result.stderr
@@ -387,7 +387,7 @@ class Kodiqa:
             try:
                 import subprocess
                 result = subprocess.run(
-                    ["ollama", "pull", model],
+                    [OLLAMA_BIN, "pull", model],
                     capture_output=True, text=True, timeout=600,
                 )
                 if result.returncode == 0:
