@@ -276,9 +276,43 @@ class Kodiqa:
         self.memory.close()
         self.console.print("\n[dim]Goodbye! Session saved.[/]")
 
+    def _ensure_ollama(self):
+        """Make sure Ollama is running, start it if not."""
+        import subprocess
+        import time
+        try:
+            requests.get(f"{OLLAMA_URL}/api/tags", timeout=3)
+            return True  # Already running
+        except Exception:
+            pass
+        # Try to start Ollama
+        self.console.print("[dim]Starting Ollama...[/]")
+        try:
+            subprocess.Popen(
+                [OLLAMA_BIN, "serve"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            # Wait for it to be ready (up to 10s)
+            for _ in range(20):
+                time.sleep(0.5)
+                try:
+                    requests.get(f"{OLLAMA_URL}/api/tags", timeout=2)
+                    self.console.print("[green]●[/] Ollama started")
+                    return True
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        self.console.print("[yellow]●[/] Could not start Ollama [dim](start manually: ollama serve)[/]")
+        return False
+
     def _check_updates(self):
         """Check for model updates and new models on startup."""
         import subprocess
+
+        if not self._ensure_ollama():
+            return
 
         try:
             # Get installed models
@@ -286,7 +320,7 @@ class Kodiqa:
             resp.raise_for_status()
             installed = {m["name"]: m for m in resp.json().get("models", [])}
         except Exception:
-            return  # Ollama not running, skip silently
+            return
 
         if not installed:
             return
