@@ -182,7 +182,7 @@ On startup and when changing directories, Kodiqa detects your git branch, recent
 When conversation gets too long (~80K tokens), Kodiqa automatically summarizes it to keep things fast.
 
 ### Multi-Model Consensus (Default)
-On startup, Kodiqa auto-discovers all installed Ollama models and enables multi-model mode. Every question goes to all models in parallel, each answers independently, then a judge model merges the best parts into a single consensus answer. Use `/single` or `/model <name>` to switch to single model when needed.
+On startup, Kodiqa auto-discovers all installed Ollama models and enables multi-model mode. Every question goes to all models **sequentially** (one at a time to save RAM), each answers independently, then a judge model merges the best parts into a single consensus answer. Models are unloaded from RAM immediately after responding (`keep_alive: 0`), so even 5 large models work fine on 24GB RAM. Use `/single` or `/model <name>` to switch to single model when needed.
 
 ### Auto-Update & Model Discovery
 On every startup, Kodiqa automatically:

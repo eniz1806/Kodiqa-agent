@@ -741,35 +741,28 @@ class Kodiqa:
     # ── Multi-model chat ──
 
     def _chat_multi(self, user_msg):
-        """Send message to all selected models and show each response."""
-        from concurrent.futures import ThreadPoolExecutor, as_completed
+        """Send message to all selected models one at a time (sequential to save RAM)."""
+        from rich.status import Status
 
         memories_ctx = self.memory.get_context()
         context_file_ctx = self._load_context_file()
 
-        def query_model(model_name):
-            """Query a single model (no streaming, no tools - just chat)."""
-            if is_claude_model(model_name):
-                return self._multi_query_claude(model_name, user_msg, memories_ctx, context_file_ctx)
-            else:
-                return self._multi_query_ollama(model_name, user_msg, memories_ctx, context_file_ctx)
+        self.console.print(f"\n[dim]Querying {len(self.multi_models)} models sequentially (saves RAM)...[/]\n")
 
-        self.console.print(f"\n[dim]Querying {len(self.multi_models)} models...[/]\n")
-
-        # Run all models in parallel
+        # Query models one at a time so Ollama can unload between them
         results = {}
-        with ThreadPoolExecutor(max_workers=len(self.multi_models)) as executor:
-            futures = {executor.submit(query_model, m): m for m in self.multi_models}
-            for future in as_completed(futures):
-                model_name = futures[future]
+        for i, model_name in enumerate(self.multi_models, 1):
+            with Status(f"[bold cyan]({i}/{len(self.multi_models)}) Asking {model_name}...[/]", console=self.console):
                 try:
-                    results[model_name] = future.result()
+                    if is_claude_model(model_name):
+                        results[model_name] = self._multi_query_claude(model_name, user_msg, memories_ctx, context_file_ctx)
+                    else:
+                        results[model_name] = self._multi_query_ollama(model_name, user_msg, memories_ctx, context_file_ctx)
                 except Exception as e:
                     results[model_name] = f"Error: {e}"
 
-        # Display individual results
-        for model_name in self.multi_models:
-            response = results.get(model_name, "No response")
+            # Display result immediately after each model finishes
+            response = results[model_name]
             is_claude = is_claude_model(model_name)
             color = "yellow" if is_claude else "green"
             self.console.print(Panel(
@@ -804,7 +797,7 @@ class Kodiqa:
         try:
             resp = requests.post(
                 f"{OLLAMA_URL}/api/chat",
-                json={"model": model_name, "messages": messages, "stream": False},
+                json={"model": model_name, "messages": messages, "stream": False, "keep_alive": 0},
                 timeout=300,
             )
             resp.raise_for_status()
