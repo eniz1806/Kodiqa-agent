@@ -304,4 +304,40 @@ CLAUDE_TOOLS = [
             "required": ["question"]
         }
     },
+    {
+        "name": "undo_edit",
+        "description": "Undo the last edit to a file. Restores the previous version. Can be called multiple times to undo further back (up to 10 edits per file).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Absolute path to the file to undo"
+                }
+            },
+            "required": ["path"]
+        }
+    },
+    {
+        "name": "search_replace_all",
+        "description": "Replace ALL occurrences of an exact string in a file. Use this instead of edit_file when you want to replace every match, not just the first one.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Absolute path to the file"
+                },
+                "old_string": {
+                    "type": "string",
+                    "description": "The exact text to find (all occurrences will be replaced)"
+                },
+                "new_string": {
+                    "type": "string",
+                    "description": "The replacement text"
+                }
+            },
+            "required": ["path", "old_string", "new_string"]
+        }
+    },
 ]

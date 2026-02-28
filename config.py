@@ -36,15 +36,18 @@ QWEN_ALIASES = {
 
 QWEN_API_URL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions"
 
-MAX_ITERATIONS = 15
-MAX_FILE_SIZE = 100_000
-COMMAND_TIMEOUT = 120
 KODIQA_DIR = os.path.expanduser("~/.kodiqa")
 MEMORY_DB = os.path.join(KODIQA_DIR, "memory.db")
 CONTEXT_FILE = os.path.join(KODIQA_DIR, "KODIQA.md")
 SETTINGS_FILE = os.path.join(KODIQA_DIR, "settings.json")
+CONFIG_FILE = os.path.join(KODIQA_DIR, "config.json")
 
-CONFIRM_ACTIONS = {"write_file", "edit_file", "run_command", "git_commit"}
+# Defaults — all overridable via ~/.kodiqa/config.json
+MAX_ITERATIONS = 15
+MAX_FILE_SIZE = 100_000
+COMMAND_TIMEOUT = 120
+
+CONFIRM_ACTIONS = {"write_file", "edit_file", "run_command", "git_commit", "search_replace_all"}
 
 BLOCKED_COMMANDS = [
     "rm -rf /", "rm -rf /*", "sudo rm -rf",
@@ -66,6 +69,38 @@ SKIP_EXTENSIONS = {
     ".mp3", ".mp4", ".avi", ".mov", ".pdf", ".doc",
     ".class", ".o", ".a", ".wasm", ".lock",
 }
+
+DEFAULTS = {
+    "max_iterations": MAX_ITERATIONS,
+    "max_file_size": MAX_FILE_SIZE,
+    "command_timeout": COMMAND_TIMEOUT,
+    "auto_compact_threshold": 80000,
+    "undo_buffer_size": 10,
+    "blocked_commands": BLOCKED_COMMANDS,
+    "skip_dirs": list(SKIP_DIRS),
+    "skip_extensions": list(SKIP_EXTENSIONS),
+}
+
+
+def load_config():
+    """Load user config from ~/.kodiqa/config.json, merged with defaults."""
+    config = dict(DEFAULTS)
+    if os.path.isfile(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, "r") as f:
+                user_config = json.load(f)
+            config.update(user_config)
+        except Exception:
+            pass
+    return config
+
+
+def save_default_config():
+    """Write default config.json if it doesn't exist (template for user)."""
+    if not os.path.isfile(CONFIG_FILE):
+        os.makedirs(KODIQA_DIR, exist_ok=True)
+        with open(CONFIG_FILE, "w") as f:
+            json.dump(DEFAULTS, f, indent=2, default=list)
 
 
 def load_settings():
@@ -179,6 +214,18 @@ tags: optional tags
 
 [ACTION: memory_search]
 query: search terms
+[/ACTION]
+
+### Undo
+[ACTION: undo_edit]
+path: /absolute/path/to/file
+[/ACTION]
+
+### Replace All (replaces every occurrence, not just the first)
+[ACTION: search_replace_all]
+path: /absolute/path/to/file
+old: text to find everywhere
+new: replacement text
 [/ACTION]
 
 ### Ask User (use this to clarify before assuming)

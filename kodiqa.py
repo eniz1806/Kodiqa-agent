@@ -16,16 +16,97 @@ from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.status import Status
 
+import logging
+import time
+
 from config import (
     OLLAMA_URL, OLLAMA_BIN, DEFAULT_MODEL, MODEL_ALIASES, CLAUDE_ALIASES,
     CLAUDE_API_URL, QWEN_ALIASES, QWEN_API_URL, CONTEXT_FILE, KODIQA_DIR,
-    MAX_ITERATIONS, SYSTEM_PROMPT, SKIP_DIRS, SKIP_EXTENSIONS, MAX_FILE_SIZE,
-    load_settings, save_settings, is_claude_model, is_qwen_api_model,
+    CONFIG_FILE, MAX_ITERATIONS, SYSTEM_PROMPT, SKIP_DIRS, SKIP_EXTENSIONS,
+    MAX_FILE_SIZE, DEFAULTS,
+    load_settings, save_settings, load_config, save_default_config,
+    is_claude_model, is_qwen_api_model,
 )
 from memory import MemoryStore
 from actions import parse_actions, execute_action, execute_tool_call, execute_tools_parallel, set_console
 from web import set_search_engine, get_search_engine, set_google_api_keys, get_google_api_keys
 from tools import CLAUDE_TOOLS
+
+# ── Error logging and API retry ──
+
+ERROR_LOG = os.path.join(KODIQA_DIR, "error.log")
+_logger = None
+
+
+def _setup_error_log():
+    """Setup error logging to ~/.kodiqa/error.log with size cap."""
+    global _logger
+    os.makedirs(KODIQA_DIR, exist_ok=True)
+    # Cap log at 1MB — keep last 500KB
+    if os.path.isfile(ERROR_LOG) and os.path.getsize(ERROR_LOG) > 1_000_000:
+        try:
+            with open(ERROR_LOG, "rb") as f:
+                f.seek(-500_000, 2)
+                tail = f.read()
+            with open(ERROR_LOG, "wb") as f:
+                f.write(tail)
+        except Exception:
+            pass
+    logger = logging.getLogger("kodiqa")
+    if not logger.handlers:
+        handler = logging.FileHandler(ERROR_LOG)
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+        logger.addHandler(handler)
+    logger.setLevel(logging.WARNING)
+    _logger = logger
+    return logger
+
+
+def _retry_api_call(fn, max_retries=3, backoff_base=2.0, provider_name="API"):
+    """Retry an API call with exponential backoff on 429, 5xx, and connection errors."""
+    last_error = None
+    for attempt in range(max_retries):
+        try:
+            resp = fn()
+            if resp.status_code == 429:
+                wait = backoff_base ** attempt
+                if _logger:
+                    _logger.warning(f"{provider_name} rate limited, retry {attempt+1}/{max_retries} in {wait}s")
+                time.sleep(wait)
+                continue
+            if resp.status_code >= 500:
+                wait = backoff_base ** attempt
+                if _logger:
+                    _logger.warning(f"{provider_name} server error {resp.status_code}, retry in {wait}s")
+                time.sleep(wait)
+                continue
+            return resp
+        except requests.ConnectionError as e:
+            last_error = e
+            wait = backoff_base ** attempt
+            if _logger:
+                _logger.warning(f"{provider_name} connection error, retry {attempt+1}/{max_retries} in {wait}s")
+            time.sleep(wait)
+        except requests.Timeout as e:
+            last_error = e
+            if _logger:
+                _logger.warning(f"{provider_name} timeout, retry {attempt+1}/{max_retries}")
+            time.sleep(1)
+    raise last_error or Exception(f"{provider_name} failed after {max_retries} retries")
+
+
+# ── Cost table (per 1M tokens: input, output) ──
+
+COST_TABLE = {
+    "claude-sonnet-4-20250514": (3.0, 15.0),
+    "claude-haiku-4-5-20251001": (0.80, 4.0),
+    "claude-opus-4-20250514": (15.0, 75.0),
+    "qwen-plus": (0.40, 1.20),
+    "qwen-max": (1.20, 6.0),
+    "qwen3-coder-plus": (0.574, 2.294),
+    "qwen-flash": (0.05, 0.40),
+}
+
 
 # Claude system prompt (more detailed since Claude can handle it)
 CLAUDE_SYSTEM = """You are Kodiqa, an expert AI coding assistant running locally on the user's machine. You have direct access to their filesystem, terminal, and the web through your tools.
@@ -54,10 +135,14 @@ class Kodiqa:
         self.history = []
         self.cwd = os.getcwd()
         self.settings = load_settings()
+        self.config = load_config()
+        save_default_config()
+        _setup_error_log()
         self.claude_key = self.settings.get("claude_api_key", "")
         self.session_file = os.path.join(KODIQA_DIR, "session.json")
         self.multi_models = self._discover_models()  # default: multi-model mode
         self._auto_approved = set()  # action types auto-approved this session
+        self.session_tokens = {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0, "cost": 0.0}
         # Setup readline for arrow keys + input history
         self._history_file = os.path.join(KODIQA_DIR, "input_history")
         try:
@@ -490,6 +575,8 @@ class Kodiqa:
                 "[bold]/compact[/]       - Summarize conversation to save context\n"
                 "[bold]/context[/]       - Show project context file\n"
                 "[bold]/key[/]           - Add/update API key (Claude or Qwen)\n"
+                "[bold]/tokens[/]        - Show session token usage and cost\n"
+                "[bold]/config[/]        - Show/reload config\n"
                 "[bold]/search[/]        - Switch search engine (google/duckduckgo)\n"
                 "[bold]/cd <path>[/]     - Change working directory\n"
                 "[bold]/quit[/]          - Exit",
@@ -670,6 +757,27 @@ class Kodiqa:
                     self.console.print("[green]Switched to Google API search (100 free/day)[/]")
             else:
                 self.console.print("[red]Unknown engine. Use: /search google | /search duckduckgo | /search api[/]")
+        elif command == "/config":
+            if arg.strip().lower() == "reload":
+                self.config = load_config()
+                self.console.print("[green]Config reloaded.[/]")
+            else:
+                self.console.print(Panel(
+                    json.dumps(self.config, indent=2, default=list),
+                    title="Config", border_style="blue",
+                ))
+                self.console.print(f"[dim]Edit: {CONFIG_FILE}[/]")
+                self.console.print(f"[dim]Reload: /config reload[/]")
+        elif command == "/tokens":
+            st = self.session_tokens
+            self.console.print(Panel(
+                f"Input tokens:  {st['input']:,}\n"
+                f"Output tokens: {st['output']:,}\n"
+                f"Cache read:    {st['cache_read']:,}\n"
+                f"Cache create:  {st['cache_creation']:,}\n"
+                f"Total cost:    ${st['cost']:.4f}",
+                title="Session Token Usage", border_style="blue",
+            ))
         else:
             self.console.print(f"[red]Unknown command: {command}. Type /help[/]")
 
@@ -840,9 +948,10 @@ class Kodiqa:
     # ── Auto-compact when context is getting large ──
 
     def _estimate_tokens(self):
-        """Rough token estimate: ~4 chars per token."""
+        """Estimate context tokens — use actual API counts if available, else heuristic."""
+        if self.session_tokens["input"] > 0:
+            return self.session_tokens["input"]
         total = sum(len(m.get("content", "")) for m in self.history if isinstance(m.get("content"), str))
-        # Also count tool results in content blocks
         for m in self.history:
             if isinstance(m.get("content"), list):
                 for block in m["content"]:
@@ -851,10 +960,16 @@ class Kodiqa:
         return total // 4
 
     def _auto_compact_if_needed(self):
-        """Auto-compact when context exceeds ~80K tokens."""
+        """Auto-compact when context approaches provider limit."""
         tokens = self._estimate_tokens()
-        if tokens > 80000:
-            self.console.print(f"[dim]Context large (~{tokens:,} tokens). Auto-compacting...[/]")
+        if is_claude_model(self.model):
+            threshold = 150_000
+        elif is_qwen_api_model(self.model):
+            threshold = 800_000
+        else:
+            threshold = self.config.get("auto_compact_threshold", 80000)
+        if tokens > threshold:
+            self.console.print(f"[dim]Context large (~{tokens:,} tokens, limit ~{threshold:,}). Auto-compacting...[/]")
             self._compact()
 
     # ── Main chat dispatch ──
@@ -1192,45 +1307,53 @@ class Kodiqa:
         return messages
 
     def _call_claude_stream(self, system_prompt, messages):
-        """Stream Claude API with native tool_use support. Returns parsed response."""
+        """Stream Claude API with native tool_use, prompt caching, and token tracking."""
         if not self.claude_key:
             self.console.print("[red]No Claude API key. Use /key to add one.[/]")
             return None
 
+        # Prompt caching: system as blocks with cache_control
+        system_blocks = [{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}]
+        # Cache the tool definitions too
+        cached_tools = [dict(t) for t in CLAUDE_TOOLS]
+        cached_tools[-1] = dict(cached_tools[-1])
+        cached_tools[-1]["cache_control"] = {"type": "ephemeral"}
+
         try:
-            resp = requests.post(
-                CLAUDE_API_URL,
-                headers={
-                    "x-api-key": self.claude_key,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json",
-                },
-                json={
-                    "model": self.model,
-                    "max_tokens": 8192,
-                    "system": system_prompt,
-                    "messages": messages,
-                    "tools": CLAUDE_TOOLS,
-                    "stream": True,
-                },
-                stream=True,
-                timeout=300,
+            resp = _retry_api_call(
+                lambda: requests.post(
+                    CLAUDE_API_URL,
+                    headers={
+                        "x-api-key": self.claude_key,
+                        "anthropic-version": "2023-06-01",
+                        "anthropic-beta": "prompt-caching-2024-07-31",
+                        "content-type": "application/json",
+                    },
+                    json={
+                        "model": self.model,
+                        "max_tokens": 8192,
+                        "system": system_blocks,
+                        "messages": messages,
+                        "tools": cached_tools,
+                        "stream": True,
+                    },
+                    stream=True,
+                    timeout=300,
+                ),
+                provider_name="Claude",
             )
             if resp.status_code == 401:
                 self.console.print("[red]Invalid Claude API key. Use /key to update it.[/]")
                 return None
-            if resp.status_code == 429:
-                self.console.print("[red]Claude rate limit hit. Wait a moment and try again.[/]")
-                return None
             if resp.status_code >= 400:
                 self.console.print(f"[red]Claude API error {resp.status_code}: {resp.text[:200]}[/]")
                 return None
-            resp.raise_for_status()
-        except requests.ConnectionError:
-            self.console.print("[red]Can't connect to Claude API. Check your internet.[/]")
-            return None
         except Exception as e:
+            if _logger:
+                _logger.error(f"Claude API failed: {e}")
             self.console.print(f"[red]Claude error: {e}[/]")
+            if self.qwen_key:
+                self.console.print("[yellow]Try /model qwen-api to switch providers.[/]")
             return None
 
         # Parse streaming response
@@ -1241,6 +1364,7 @@ class Kodiqa:
         current_tool = None
         current_tool_json = []
         stop_reason = "end_turn"
+        stream_usage = {}
         first_token = True
         thinking_status = Status("  [dim]Thinking...[/]", console=self.console, spinner="dots")
         thinking_status.start()
@@ -1262,7 +1386,11 @@ class Kodiqa:
 
                 event_type = event.get("type", "")
 
-                if event_type == "content_block_start":
+                if event_type == "message_start":
+                    msg = event.get("message", {})
+                    stream_usage = msg.get("usage", {})
+
+                elif event_type == "content_block_start":
                     block = event.get("content_block", {})
                     if block.get("type") == "tool_use":
                         if first_token:
@@ -1301,6 +1429,9 @@ class Kodiqa:
 
                 elif event_type == "message_delta":
                     stop_reason = event.get("delta", {}).get("stop_reason", stop_reason)
+                    delta_usage = event.get("usage", {})
+                    if delta_usage:
+                        stream_usage.update(delta_usage)
 
                 elif event_type == "error":
                     thinking_status.stop()
@@ -1314,6 +1445,7 @@ class Kodiqa:
         if first_token:
             thinking_status.stop()
         self.console.print()
+        self._display_token_usage(stream_usage)
         return {"text": "".join(full_text), "tool_calls": tool_calls, "stop_reason": stop_reason}
 
     def _claude_nostream(self, system, messages):
@@ -1463,43 +1595,44 @@ class Kodiqa:
         return messages
 
     def _call_qwen_stream(self, messages):
-        """Stream Qwen API with OpenAI-compatible tool calling. Returns parsed response."""
+        """Stream Qwen API with OpenAI-compatible tool calling, retry, and token tracking."""
         if not self.qwen_key:
             self.console.print("[red]No Qwen API key. Use /key qwen to add one.[/]")
             return None
 
         try:
-            resp = requests.post(
-                QWEN_API_URL,
-                headers={
-                    "Authorization": f"Bearer {self.qwen_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": self.model,
-                    "messages": messages,
-                    "tools": self._get_qwen_tools(),
-                    "max_tokens": 8192,
-                    "stream": True,
-                },
-                stream=True,
-                timeout=300,
+            resp = _retry_api_call(
+                lambda: requests.post(
+                    QWEN_API_URL,
+                    headers={
+                        "Authorization": f"Bearer {self.qwen_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": self.model,
+                        "messages": messages,
+                        "tools": self._get_qwen_tools(),
+                        "max_tokens": 8192,
+                        "stream": True,
+                        "stream_options": {"include_usage": True},
+                    },
+                    stream=True,
+                    timeout=300,
+                ),
+                provider_name="Qwen",
             )
             if resp.status_code == 401:
                 self.console.print("[red]Invalid Qwen API key. Use /key qwen to update it.[/]")
                 return None
-            if resp.status_code == 429:
-                self.console.print("[red]Qwen rate limit hit. Wait a moment and try again.[/]")
-                return None
             if resp.status_code >= 400:
                 self.console.print(f"[red]Qwen API error {resp.status_code}: {resp.text[:200]}[/]")
                 return None
-            resp.raise_for_status()
-        except requests.ConnectionError:
-            self.console.print("[red]Can't connect to Qwen API. Check your internet.[/]")
-            return None
         except Exception as e:
+            if _logger:
+                _logger.error(f"Qwen API failed: {e}")
             self.console.print(f"[red]Qwen error: {e}[/]")
+            if self.claude_key:
+                self.console.print("[yellow]Try /model claude to switch providers.[/]")
             return None
 
         # Parse SSE streaming response (OpenAI format)
@@ -1507,6 +1640,7 @@ class Kodiqa:
 
         full_text = []
         tool_calls = {}  # index -> {id, name, arguments}
+        stream_usage = {}
         first_token = True
         thinking_status = Status("  [dim]Thinking...[/]", console=self.console, spinner="dots")
         thinking_status.start()
@@ -1526,7 +1660,12 @@ class Kodiqa:
                 except json.JSONDecodeError:
                     continue
 
-                choice = chunk.get("choices", [{}])[0]
+                # Capture usage from final chunk
+                usage_data = chunk.get("usage")
+                if usage_data:
+                    stream_usage = usage_data
+
+                choice = chunk.get("choices", [{}])[0] if chunk.get("choices") else {}
                 delta = choice.get("delta", {})
 
                 # Text content
@@ -1568,6 +1707,7 @@ class Kodiqa:
         if first_token:
             thinking_status.stop()
         self.console.print()
+        self._display_token_usage(stream_usage)
 
         # Parse accumulated tool calls
         parsed_tools = []
@@ -1638,16 +1778,25 @@ class Kodiqa:
 
     def _stream_ollama(self, messages):
         try:
-            resp = requests.post(
-                f"{OLLAMA_URL}/api/chat",
-                json={"model": self.model, "messages": messages, "stream": True},
-                stream=True, timeout=300,
+            resp = _retry_api_call(
+                lambda: requests.post(
+                    f"{OLLAMA_URL}/api/chat",
+                    json={"model": self.model, "messages": messages, "stream": True},
+                    stream=True, timeout=300,
+                ),
+                provider_name="Ollama",
             )
             resp.raise_for_status()
         except requests.ConnectionError:
             self.console.print("[red]Can't connect to Ollama. Is it running?[/]")
+            if self.claude_key:
+                self.console.print("[yellow]Try /model claude to use Claude API instead.[/]")
+            elif self.qwen_key:
+                self.console.print("[yellow]Try /model qwen-api to use Qwen API instead.[/]")
             return None
         except Exception as e:
+            if _logger:
+                _logger.error(f"Ollama failed: {e}")
             self.console.print(f"[red]Ollama error: {e}[/]")
             return None
 
@@ -1684,6 +1833,29 @@ class Kodiqa:
         return "".join(full_text)
 
     # ── Shared ──
+
+    def _display_token_usage(self, usage, model=None):
+        """Show token usage and cost after a response."""
+        if not usage:
+            return
+        model = model or self.model
+        inp = usage.get("input_tokens", 0) or usage.get("prompt_tokens", 0)
+        out = usage.get("output_tokens", 0) or usage.get("completion_tokens", 0)
+        cache_read = usage.get("cache_read_input_tokens", 0)
+        cache_create = usage.get("cache_creation_input_tokens", 0)
+        self.session_tokens["input"] += inp
+        self.session_tokens["output"] += out
+        self.session_tokens["cache_read"] += cache_read
+        self.session_tokens["cache_creation"] += cache_create
+        cost_rates = COST_TABLE.get(model, (0, 0))
+        cost = (inp * cost_rates[0] + out * cost_rates[1]) / 1_000_000
+        self.session_tokens["cost"] += cost
+        parts = [f"[dim]{inp:,} in / {out:,} out[/]"]
+        if cache_read:
+            parts.append(f"[dim green]cache: {cache_read:,}[/]")
+        if cost > 0:
+            parts.append(f"[dim](${cost:.4f} / session: ${self.session_tokens['cost']:.4f})[/]")
+        self.console.print("  " + " | ".join(parts))
 
     def _confirm(self, description):
         self.console.print()
@@ -1734,6 +1906,8 @@ def _tool_label(name, params):
         "memory_search": lambda: f"Recall [cyan]{p.get('query', '?')}[/]",
         "read_image": lambda: f"View image [cyan]{_short_path(p.get('path', '?'))}[/]",
         "read_pdf": lambda: f"Read PDF [cyan]{_short_path(p.get('path', '?'))}[/]",
+        "undo_edit": lambda: f"Undo [cyan]{_short_path(p.get('path', '?'))}[/]",
+        "search_replace_all": lambda: f"Replace all in [cyan]{_short_path(p.get('path', '?'))}[/]",
         "ask_user": lambda: f"Ask user",
     }
     fn = labels.get(name)

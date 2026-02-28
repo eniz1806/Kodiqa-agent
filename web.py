@@ -1,8 +1,11 @@
 """Kodiqa web tools - DuckDuckGo + Google search and page fetching."""
 
+import logging
 import re
 import requests
 from bs4 import BeautifulSoup
+
+_logger = logging.getLogger("kodiqa")
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -79,6 +82,7 @@ def search_duckduckgo(query, max_results=8):
                 break
         return results
     except Exception as e:
+        _logger.warning(f"DuckDuckGo search failed: {e}")
         return [{"title": "Search Error", "url": "", "snippet": str(e)}]
 
 

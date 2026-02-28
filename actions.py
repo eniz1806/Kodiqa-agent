@@ -1,10 +1,12 @@
-"""Kodiqa action parser and executor - 18 tools mirroring Claude Code."""
+"""Kodiqa action parser and executor - 20 tools mirroring Claude Code."""
 
 import base64
 import os
 import re
 import subprocess
 import difflib
+import logging
+from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -16,6 +18,11 @@ from web import web_search, fetch_page, format_results
 
 # ── Console reference (set by kodiqa.py on startup) ──
 _console = None
+_logger = logging.getLogger("kodiqa")
+
+# Per-file undo stack: {filepath: deque([(old_content), ...], maxlen=N)}
+_undo_buffer = defaultdict(lambda: deque(maxlen=10))
+
 
 def set_console(console):
     global _console
@@ -226,6 +233,12 @@ def _dispatch(name, p, memory):
         "memory_search": lambda: memory.search(p.get("query", "")),
         "read_image": lambda: do_read_image(p.get("path", "")),
         "read_pdf": lambda: do_read_pdf(p.get("path", "")),
+        "undo_edit": lambda: do_undo_edit(p.get("path", "")),
+        "search_replace_all": lambda: do_edit_file_all(
+            p.get("path", ""),
+            p.get("old_string", p.get("old", "")),
+            p.get("new_string", p.get("new", "")),
+        ),
         "ask_user": lambda: do_ask_user(
             p.get("question", ""),
             _parse_options(p.get("options", [])),
@@ -273,7 +286,6 @@ def do_read_file(path):
 
 def do_write_file(path, content):
     path = os.path.expanduser(path)
-    # Show diff if file exists
     old_content = ""
     if os.path.isfile(path):
         try:
@@ -281,6 +293,8 @@ def do_write_file(path, content):
                 old_content = f.read()
         except Exception:
             pass
+    # Save to undo buffer before writing
+    _undo_buffer[os.path.abspath(path)].append(old_content if old_content else None)
     if old_content:
         _show_diff(path, old_content, content)
     else:
@@ -300,13 +314,59 @@ def do_edit_file(path, old_text, new_text):
         content = f.read()
     if old_text not in content:
         return f"Text not found in {path}. Make sure the old text matches exactly."
+    # Save to undo buffer before editing
+    _undo_buffer[os.path.abspath(path)].append(content)
     count = content.count(old_text)
     new_content = content.replace(old_text, new_text, 1)
-    # Show diff
     _show_diff(path, content, new_content)
     with open(path, "w") as f:
         f.write(new_content)
     return f"Replaced in {path} ({count} occurrence{'s' if count > 1 else ''} found, replaced first)"
+
+
+def do_undo_edit(path):
+    """Restore the previous version of a file."""
+    path = os.path.expanduser(path)
+    abs_path = os.path.abspath(path)
+    if abs_path not in _undo_buffer or not _undo_buffer[abs_path]:
+        return f"No undo history for {path}"
+    previous = _undo_buffer[abs_path].pop()
+    if previous is None:
+        # File was newly created — undo means delete it
+        try:
+            os.remove(path)
+            return f"Undone: removed newly created file {path}"
+        except Exception as e:
+            return f"Undo error: {e}"
+    # Show diff and restore
+    current = ""
+    if os.path.isfile(path):
+        with open(path, "r", errors="replace") as f:
+            current = f.read()
+    _show_diff(path, current, previous)
+    with open(path, "w") as f:
+        f.write(previous)
+    remaining = len(_undo_buffer[abs_path])
+    return f"Undone edit to {path} (restored previous version, {remaining} more undo(s) available)"
+
+
+def do_edit_file_all(path, old_text, new_text):
+    """Replace ALL occurrences of old_text with new_text in a file."""
+    path = os.path.expanduser(path)
+    if not os.path.isfile(path):
+        return f"File not found: {path}"
+    with open(path, "r") as f:
+        content = f.read()
+    if old_text not in content:
+        return f"Text not found in {path}. Make sure the old text matches exactly."
+    # Save to undo buffer
+    _undo_buffer[os.path.abspath(path)].append(content)
+    count = content.count(old_text)
+    new_content = content.replace(old_text, new_text)
+    _show_diff(path, content, new_content)
+    with open(path, "w") as f:
+        f.write(new_content)
+    return f"Replaced {count} occurrence(s) in {path}"
 
 
 def do_list_dir(path):
