@@ -18,9 +18,9 @@ from rich.status import Status
 
 from config import (
     OLLAMA_URL, OLLAMA_BIN, DEFAULT_MODEL, MODEL_ALIASES, CLAUDE_ALIASES,
-    CLAUDE_API_URL, CONTEXT_FILE, KODIQA_DIR,
+    CLAUDE_API_URL, QWEN_ALIASES, QWEN_API_URL, CONTEXT_FILE, KODIQA_DIR,
     MAX_ITERATIONS, SYSTEM_PROMPT, SKIP_DIRS, SKIP_EXTENSIONS, MAX_FILE_SIZE,
-    load_settings, save_settings, is_claude_model,
+    load_settings, save_settings, is_claude_model, is_qwen_api_model,
 )
 from memory import MemoryStore
 from actions import parse_actions, execute_action, execute_tool_call, execute_tools_parallel, set_console
@@ -64,6 +64,7 @@ class Kodiqa:
         except FileNotFoundError:
             pass
         readline.set_history_length(500)
+        self.qwen_key = self.settings.get("qwen_api_key", "")
         # Load Google API keys if saved
         g_key = self.settings.get("google_api_key", "")
         g_cx = self.settings.get("google_cx", "")
@@ -263,7 +264,12 @@ class Kodiqa:
         return "\n\n".join(parts)
 
     def _welcome(self):
-        provider = "[yellow]Claude API[/]" if is_claude_model(self.model) else "[green]Local/Ollama[/]"
+        if is_claude_model(self.model):
+            provider = "[yellow]Claude API[/]"
+        elif is_qwen_api_model(self.model):
+            provider = "[blue]Qwen API[/]"
+        else:
+            provider = "[green]Local/Ollama[/]"
         git_line = ""
         if self.git_info:
             g = self.git_info
@@ -467,10 +473,12 @@ class Kodiqa:
             sys.exit(0)
         elif command == "/help":
             claude_status = "[green]connected[/]" if self.claude_key else "[dim]not set[/]"
+            qwen_status = "[green]connected[/]" if self.qwen_key else "[dim]not set[/]"
             self.console.print(Panel(
                 "[bold]/model <name>[/]  - Switch model\n"
                 "  [dim]Local: fast, qwen, coder, reason, gpt[/]\n"
                 f"  [dim]Claude: claude, sonnet, haiku, opus ({claude_status})[/]\n"
+                f"  [dim]Qwen API: qwen-api, qwen-max, qwen-coder-api, qwen-flash-api ({qwen_status})[/]\n"
                 "[bold]/multi <models>[/] - Multi-model mode (e.g. /multi coder qwen reason)\n"
                 "[bold]/single[/]        - Back to single model mode\n"
                 "[bold]/models[/]       - List all available models\n"
@@ -480,7 +488,7 @@ class Kodiqa:
                 "[bold]/forget <id>[/]   - Delete a memory\n"
                 "[bold]/compact[/]       - Summarize conversation to save context\n"
                 "[bold]/context[/]       - Show project context file\n"
-                "[bold]/key[/]           - Add/update Claude API key\n"
+                "[bold]/key[/]           - Add/update API key (Claude or Qwen)\n"
                 "[bold]/search[/]        - Switch search engine (google/duckduckgo)\n"
                 "[bold]/cd <path>[/]     - Change working directory\n"
                 "[bold]/quit[/]          - Exit",
@@ -488,11 +496,13 @@ class Kodiqa:
             ))
         elif command == "/model":
             if not arg:
-                provider = "Claude API" if is_claude_model(self.model) else "Local/Ollama"
+                provider = "Claude API" if is_claude_model(self.model) else ("Qwen API" if is_qwen_api_model(self.model) else "Local/Ollama")
                 self.console.print(f"Current model: [cyan]{self.model}[/] ({provider})")
                 self.console.print(f"Local aliases: {', '.join(MODEL_ALIASES.keys())}")
                 if self.claude_key:
                     self.console.print(f"Claude aliases: {', '.join(CLAUDE_ALIASES.keys())}")
+                if self.qwen_key:
+                    self.console.print(f"Qwen API aliases: {', '.join(QWEN_ALIASES.keys())}")
                 return
             if arg in CLAUDE_ALIASES:
                 if not self.claude_key:
@@ -506,13 +516,30 @@ class Kodiqa:
                     save_settings(self.settings)
                     self.console.print("[green]API key saved![/]")
                 new_model = CLAUDE_ALIASES[arg]
+            elif arg in QWEN_ALIASES:
+                if not self.qwen_key:
+                    self.console.print("[yellow]No Qwen API key set.[/]")
+                    key = Prompt.ask("[bold]Enter your DashScope API key[/] (or 'skip' to cancel)")
+                    if key.strip().lower() == "skip" or not key.strip():
+                        self.console.print("[dim]Cancelled. Staying on current model.[/]")
+                        return
+                    self.qwen_key = key.strip()
+                    self.settings["qwen_api_key"] = self.qwen_key
+                    save_settings(self.settings)
+                    self.console.print("[green]Qwen API key saved![/]")
+                new_model = QWEN_ALIASES[arg]
             elif arg in MODEL_ALIASES:
                 new_model = MODEL_ALIASES[arg]
             else:
                 new_model = arg
             self.model = new_model
             self.multi_models = []  # switch to single mode
-            provider = "[yellow]Claude API[/]" if is_claude_model(self.model) else "[green]Local[/]"
+            if is_claude_model(self.model):
+                provider = "[yellow]Claude API[/]"
+            elif is_qwen_api_model(self.model):
+                provider = "[blue]Qwen API[/]"
+            else:
+                provider = "[green]Local[/]"
             self.console.print(f"Switched to [cyan]{self.model}[/] ({provider}) [dim](single mode)[/]")
             self.console.print("[dim]Use /multi all to go back to multi-model mode[/]")
         elif command == "/multi":
@@ -542,6 +569,11 @@ class Kodiqa:
                             self.console.print(f"[red]{name} needs Claude API key. Use /key to add one.[/]")
                             return
                         resolved.append(CLAUDE_ALIASES[name])
+                    elif name in QWEN_ALIASES:
+                        if not self.qwen_key:
+                            self.console.print(f"[red]{name} needs Qwen API key. Use /key qwen to add one.[/]")
+                            return
+                        resolved.append(QWEN_ALIASES[name])
                     elif name in MODEL_ALIASES:
                         resolved.append(MODEL_ALIASES[name])
                     else:
@@ -584,7 +616,7 @@ class Kodiqa:
             self.console.print(f"[dim]File: {ctx_path}[/]")
             self.console.print(f"[dim]Global: {CONTEXT_FILE}[/]")
         elif command == "/key":
-            self._setup_api_key()
+            self._setup_api_key(arg.strip().lower() if arg.strip() else None)
         elif command == "/cd":
             path = os.path.expanduser(arg) if arg else os.path.expanduser("~")
             if os.path.isdir(path):
@@ -640,10 +672,16 @@ class Kodiqa:
         else:
             self.console.print(f"[red]Unknown command: {command}. Type /help[/]")
 
-    def _setup_api_key(self):
+    def _setup_api_key(self, provider=None):
+        if provider == "qwen":
+            self._setup_qwen_key()
+            return
+        self._setup_claude_key()
+
+    def _setup_claude_key(self):
         if self.claude_key:
             masked = self.claude_key[:10] + "..." + self.claude_key[-4:]
-            self.console.print(f"Current key: [dim]{masked}[/]")
+            self.console.print(f"Current Claude key: [dim]{masked}[/]")
         try:
             key = Prompt.ask("[bold yellow]Paste Claude API key (or 'remove' to delete)[/]")
             key = key.strip()
@@ -666,11 +704,43 @@ class Kodiqa:
         except (EOFError, KeyboardInterrupt):
             self.console.print("\n[dim]Cancelled.[/]")
 
+    def _setup_qwen_key(self):
+        if self.qwen_key:
+            masked = self.qwen_key[:8] + "..." + self.qwen_key[-4:]
+            self.console.print(f"Current Qwen key: [dim]{masked}[/]")
+        try:
+            key = Prompt.ask("[bold blue]Paste DashScope API key (or 'remove' to delete)[/]")
+            key = key.strip()
+            if key.lower() == "remove":
+                self.qwen_key = ""
+                self.settings.pop("qwen_api_key", None)
+                if is_qwen_api_model(self.model):
+                    self.model = DEFAULT_MODEL
+                    self.settings["default_model"] = DEFAULT_MODEL
+                save_settings(self.settings)
+                self.console.print("[dim]Qwen API key removed. Switched to local models.[/]")
+            elif key.startswith("sk-"):
+                self.qwen_key = key
+                self.settings["qwen_api_key"] = key
+                save_settings(self.settings)
+                self.console.print("[green]Qwen API key saved![/]")
+                self.console.print("[dim]Use /model qwen-api to switch to Qwen API.[/]")
+            else:
+                self.console.print("[yellow]Key doesn't look right (should start with sk-). Not saved.[/]")
+        except (EOFError, KeyboardInterrupt):
+            self.console.print("\n[dim]Cancelled.[/]")
+
     def _list_models(self):
         lines = []
         if self.claude_key:
             lines.append("[bold yellow]Claude API Models:[/]")
             for alias, model in CLAUDE_ALIASES.items():
+                marker = " [green]◀ current[/]" if model == self.model else ""
+                lines.append(f"  [cyan]{model}[/] (/{alias}){marker}")
+            lines.append("")
+        if self.qwen_key:
+            lines.append("[bold blue]Qwen API Models:[/]")
+            for alias, model in QWEN_ALIASES.items():
                 marker = " [green]◀ current[/]" if model == self.model else ""
                 lines.append(f"  [cyan]{model}[/] (/{alias}){marker}")
             lines.append("")
@@ -743,6 +813,11 @@ class Kodiqa:
                     "Summarize this conversation concisely, keeping all key facts, decisions, code, and file paths discussed.",
                     self.history + [{"role": "user", "content": "Summarize our conversation keeping all important details."}],
                 )
+            elif is_qwen_api_model(self.model):
+                text = self._qwen_nostream(
+                    "Summarize this conversation concisely, keeping all key facts, decisions, code, and file paths discussed.",
+                    self.history + [{"role": "user", "content": "Summarize our conversation keeping all important details."}],
+                )
             else:
                 msgs = [{"role": "system", "content": "Summarize this conversation concisely."}] + self.history
                 msgs.append({"role": "user", "content": "Summarize our conversation keeping all important details."})
@@ -789,6 +864,8 @@ class Kodiqa:
             self._chat_multi(user_msg)
         elif is_claude_model(self.model):
             self._chat_claude(user_msg)
+        elif is_qwen_api_model(self.model):
+            self._chat_qwen(user_msg)
         else:
             self._chat_ollama(user_msg)
 
@@ -810,6 +887,8 @@ class Kodiqa:
                 try:
                     if is_claude_model(model_name):
                         results[model_name] = self._multi_query_claude(model_name, user_msg, memories_ctx, context_file_ctx)
+                    elif is_qwen_api_model(model_name):
+                        results[model_name] = self._multi_query_qwen(model_name, user_msg, memories_ctx, context_file_ctx)
                     else:
                         results[model_name] = self._multi_query_ollama(model_name, user_msg, memories_ctx, context_file_ctx)
                 except Exception as e:
@@ -817,8 +896,12 @@ class Kodiqa:
 
             # Display result immediately after each model finishes
             response = results[model_name]
-            is_claude = is_claude_model(model_name)
-            color = "yellow" if is_claude else "green"
+            if is_claude_model(model_name):
+                color = "yellow"
+            elif is_qwen_api_model(model_name):
+                color = "blue"
+            else:
+                color = "green"
             self.console.print(Panel(
                 response,
                 title=f"[bold {color}]{model_name}[/]",
@@ -1251,6 +1334,302 @@ class Kodiqa:
             resp.raise_for_status()
             data = resp.json()
             return data.get("content", [{}])[0].get("text", "")
+        except Exception:
+            return ""
+
+    # ── Qwen API chat (OpenAI-compatible with tool calling) ──
+
+    def _get_qwen_tools(self):
+        """Convert Claude tool schemas to OpenAI function-calling format for Qwen."""
+        tools = []
+        for t in CLAUDE_TOOLS:
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": t["name"],
+                    "description": t["description"],
+                    "parameters": t["input_schema"],
+                },
+            })
+        return tools
+
+    def _chat_qwen(self, user_msg):
+        self.history.append({"role": "user", "content": user_msg})
+
+        for iteration in range(MAX_ITERATIONS):
+            memories_ctx = self.memory.get_context()
+            context_file_ctx = self._load_context_file()
+            system_prompt = CLAUDE_SYSTEM.format(cwd=self.cwd, model=self.model, memories=memories_ctx)
+            if context_file_ctx:
+                system_prompt += "\n\n" + context_file_ctx
+            git_ctx = self._git_context()
+            if git_ctx:
+                system_prompt += "\n\n" + git_ctx
+
+            messages = self._build_qwen_messages(system_prompt)
+
+            response = self._call_qwen_stream(messages)
+            if response is None:
+                return
+
+            text_content = response.get("text", "")
+            tool_calls = response.get("tool_calls", [])
+
+            # Build assistant message
+            assistant_msg = {"role": "assistant", "content": text_content or None}
+            if tool_calls:
+                assistant_msg["tool_calls"] = [
+                    {
+                        "id": tc["id"],
+                        "type": "function",
+                        "function": {"name": tc["name"], "arguments": json.dumps(tc["input"])},
+                    }
+                    for tc in tool_calls
+                ]
+            self.history.append(assistant_msg)
+
+            if not tool_calls:
+                self._save_session()
+                break
+
+            # Execute tools (reuse Claude's parallel execution)
+            if len(tool_calls) > 1:
+                with Status(f"  [yellow]●[/] Running {len(tool_calls)} tools...", console=self.console, spinner="dots"):
+                    results_list = execute_tools_parallel(tool_calls, self.memory, self._confirm)
+                for tc_id, result in results_list:
+                    tc_name = next((tc["name"] for tc in tool_calls if tc["id"] == tc_id), "?")
+                    tc_input = next((tc.get("input", {}) for tc in tool_calls if tc["id"] == tc_id), {})
+                    self.console.print(f"  [green]●[/] {_tool_label(tc_name, tc_input)}")
+            else:
+                results_list = []
+                tc = tool_calls[0]
+                label = _tool_label(tc["name"], tc.get("input", {}))
+                with Status(f"  [yellow]●[/] {label}", console=self.console, spinner="dots"):
+                    result = execute_tool_call(tc["name"], tc["input"], self.memory, self._confirm)
+                    if len(result) > 20000:
+                        result = result[:20000] + "\n... (truncated)"
+                    results_list.append((tc["id"], result))
+                self.console.print(f"  [green]●[/] {label}")
+
+            # Add tool results as separate messages (OpenAI format)
+            for tc_id, result in results_list:
+                self.history.append({
+                    "role": "tool",
+                    "tool_call_id": tc_id,
+                    "content": result,
+                })
+            self._save_session()
+
+            if iteration < MAX_ITERATIONS - 1:
+                self.console.print(f"  [dim]({iteration + 1}/{MAX_ITERATIONS} iterations)[/]")
+        else:
+            self.console.print(f"[yellow]Reached max iterations ({MAX_ITERATIONS}). Stopping.[/]")
+
+    def _build_qwen_messages(self, system_prompt):
+        """Convert history to OpenAI message format for Qwen API."""
+        messages = [{"role": "system", "content": system_prompt}]
+        for msg in self.history:
+            role = msg.get("role")
+            if role == "system":
+                continue
+            if role == "tool":
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": msg.get("tool_call_id", ""),
+                    "content": msg.get("content", ""),
+                })
+            elif role == "assistant":
+                entry = {"role": "assistant", "content": msg.get("content") or ""}
+                if "tool_calls" in msg:
+                    entry["tool_calls"] = msg["tool_calls"]
+                # Skip Claude-format content blocks (list of dicts)
+                if isinstance(entry["content"], list):
+                    text_parts = [b.get("text", "") for b in entry["content"] if isinstance(b, dict) and b.get("type") == "text"]
+                    entry["content"] = "\n".join(text_parts) if text_parts else ""
+                messages.append(entry)
+            elif role == "user":
+                content = msg.get("content", "")
+                # Skip Claude tool_result blocks
+                if isinstance(content, list):
+                    text_parts = []
+                    for block in content:
+                        if isinstance(block, dict) and block.get("type") == "tool_result":
+                            text_parts.append(str(block.get("content", "")))
+                        elif isinstance(block, str):
+                            text_parts.append(block)
+                    content = "\n".join(text_parts) if text_parts else ""
+                messages.append({"role": "user", "content": content})
+        return messages
+
+    def _call_qwen_stream(self, messages):
+        """Stream Qwen API with OpenAI-compatible tool calling. Returns parsed response."""
+        if not self.qwen_key:
+            self.console.print("[red]No Qwen API key. Use /key qwen to add one.[/]")
+            return None
+
+        try:
+            resp = requests.post(
+                QWEN_API_URL,
+                headers={
+                    "Authorization": f"Bearer {self.qwen_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": self.model,
+                    "messages": messages,
+                    "tools": self._get_qwen_tools(),
+                    "max_tokens": 8192,
+                    "stream": True,
+                },
+                stream=True,
+                timeout=300,
+            )
+            if resp.status_code == 401:
+                self.console.print("[red]Invalid Qwen API key. Use /key qwen to update it.[/]")
+                return None
+            if resp.status_code == 429:
+                self.console.print("[red]Qwen rate limit hit. Wait a moment and try again.[/]")
+                return None
+            if resp.status_code >= 400:
+                self.console.print(f"[red]Qwen API error {resp.status_code}: {resp.text[:200]}[/]")
+                return None
+            resp.raise_for_status()
+        except requests.ConnectionError:
+            self.console.print("[red]Can't connect to Qwen API. Check your internet.[/]")
+            return None
+        except Exception as e:
+            self.console.print(f"[red]Qwen error: {e}[/]")
+            return None
+
+        # Parse SSE streaming response (OpenAI format)
+        self.console.print()
+
+        full_text = []
+        tool_calls = {}  # index -> {id, name, arguments}
+        first_token = True
+        thinking_status = Status("  [dim]Thinking...[/]", console=self.console, spinner="dots")
+        thinking_status.start()
+
+        try:
+            for line in resp.iter_lines():
+                if not line:
+                    continue
+                line_str = line.decode("utf-8", errors="replace")
+                if not line_str.startswith("data: "):
+                    continue
+                data = line_str[6:].strip()
+                if data == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(data)
+                except json.JSONDecodeError:
+                    continue
+
+                choice = chunk.get("choices", [{}])[0]
+                delta = choice.get("delta", {})
+
+                # Text content
+                text_chunk = delta.get("content")
+                if text_chunk:
+                    if first_token:
+                        thinking_status.stop()
+                        self.console.print("[bold green]Kodiqa[/] ", end="")
+                        first_token = False
+                    full_text.append(text_chunk)
+                    sys.stdout.write(text_chunk)
+                    sys.stdout.flush()
+
+                # Tool calls (streamed incrementally)
+                tc_list = delta.get("tool_calls", [])
+                for tc_delta in tc_list:
+                    idx = tc_delta.get("index", 0)
+                    if idx not in tool_calls:
+                        tool_calls[idx] = {
+                            "id": tc_delta.get("id", f"call_{idx}"),
+                            "name": "",
+                            "arguments": [],
+                        }
+                        if first_token:
+                            thinking_status.stop()
+                            first_token = False
+                    if tc_delta.get("id"):
+                        tool_calls[idx]["id"] = tc_delta["id"]
+                    func = tc_delta.get("function", {})
+                    if func.get("name"):
+                        tool_calls[idx]["name"] = func["name"]
+                    if func.get("arguments"):
+                        tool_calls[idx]["arguments"].append(func["arguments"])
+
+        except KeyboardInterrupt:
+            thinking_status.stop()
+            self.console.print("\n[dim](interrupted)[/]")
+
+        if first_token:
+            thinking_status.stop()
+        self.console.print()
+
+        # Parse accumulated tool calls
+        parsed_tools = []
+        for idx in sorted(tool_calls.keys()):
+            tc = tool_calls[idx]
+            args_str = "".join(tc["arguments"])
+            try:
+                input_data = json.loads(args_str) if args_str else {}
+            except json.JSONDecodeError:
+                input_data = {}
+            parsed_tools.append({"id": tc["id"], "name": tc["name"], "input": input_data})
+
+        return {"text": "".join(full_text), "tool_calls": parsed_tools}
+
+    def _multi_query_qwen(self, model_name, user_msg, memories_ctx, context_file_ctx):
+        """Non-streaming Qwen API query for multi-model mode."""
+        if not self.qwen_key:
+            return "No API key"
+        system_prompt = CLAUDE_SYSTEM.format(cwd=self.cwd, model=model_name, memories=memories_ctx)
+        if context_file_ctx:
+            system_prompt += "\n\n" + context_file_ctx
+        try:
+            resp = requests.post(
+                QWEN_API_URL,
+                headers={
+                    "Authorization": f"Bearer {self.qwen_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": model_name,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_msg},
+                    ],
+                    "max_tokens": 4096,
+                },
+                timeout=300,
+            )
+            resp.raise_for_status()
+            return resp.json().get("choices", [{}])[0].get("message", {}).get("content", "No response")
+        except Exception as e:
+            return f"Error: {e}"
+
+    def _qwen_nostream(self, system, messages):
+        """Non-streaming Qwen call (for compact)."""
+        if not self.qwen_key:
+            return ""
+        qwen_msgs = [{"role": "system", "content": system}]
+        for m in messages:
+            if isinstance(m.get("content"), str):
+                qwen_msgs.append({"role": m["role"], "content": m["content"]})
+        try:
+            resp = requests.post(
+                QWEN_API_URL,
+                headers={
+                    "Authorization": f"Bearer {self.qwen_key}",
+                    "Content-Type": "application/json",
+                },
+                json={"model": self.model, "max_tokens": 4096, "messages": qwen_msgs},
+                timeout=120,
+            )
+            resp.raise_for_status()
+            return resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
         except Exception:
             return ""
 

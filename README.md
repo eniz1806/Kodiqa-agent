@@ -30,6 +30,7 @@ source ~/LLMS/kodiqa/venv/bin/activate && python ~/LLMS/kodiqa/kodiqa.py
 | `/compact` | Summarize conversation to save context window |
 | `/context` | Show project context file |
 | `/key` | Add/update/remove Claude API key |
+| `/key qwen` | Add/update/remove Qwen/DashScope API key |
 | `/search duckduckgo` | Switch to DuckDuckGo (default, free, unlimited) |
 | `/search google` | Switch to Google scraping (free, no key) |
 | `/search api` | Switch to Google API (100/day free, needs key) |
@@ -58,6 +59,15 @@ source ~/LLMS/kodiqa/venv/bin/activate && python ~/LLMS/kodiqa/kodiqa.py
 | `/model haiku` | claude-haiku-4.5 | Fast + cheap, good for simple tasks |
 | `/model opus` | claude-opus-4 | Smartest, best for complex coding |
 
+### Qwen API Models (paid, Alibaba Cloud DashScope, requires API key)
+
+| Shortcut | Full Model | Context | Best For |
+|----------|-----------|---------|----------|
+| `/model qwen-api` | qwen-plus | 1M tokens | Best balance of smart + affordable |
+| `/model qwen-max` | qwen-max | 262K tokens | Most powerful, complex tasks |
+| `/model qwen-coder-api` | qwen3-coder-plus | 1M tokens | Code generation + tool calling |
+| `/model qwen-flash-api` | qwen-flash | 1M tokens | Fast + ultra cheap ($0.05/M input) |
+
 You can also use the full model name: `/model qwen3:14b`
 
 ## Default Behavior
@@ -65,22 +75,31 @@ You can also use the full model name: `/model qwen3:14b`
 Kodiqa starts in **multi-model mode** by default. Every question gets sent to all installed models in parallel, and a judge model merges the best parts into a consensus answer.
 
 - `/model claude` → switches to single Claude mode (asks for API key if not set)
-- `/model coder` → switches to single qwen3-coder mode
+- `/model qwen-api` → switches to single Qwen API mode (asks for API key if not set)
+- `/model coder` → switches to single qwen3-coder mode (local)
 - `/multi all` → back to multi-model mode
 
-## Claude API Setup
+## API Setup
 
+### Claude API
 On first run, Kodiqa asks if you want to add a Claude API key. You can also add it anytime:
 
 ```
-/key              → add or update your API key
+/key              → add or update Claude API key
 /key              → type "remove" to delete it and go back to local models
 /model claude     → prompts for API key if not set, switches to single Claude mode
-/model coder      → switch back to single local model
-/multi all        → back to multi-model consensus mode
 ```
 
 Get your API key at: https://console.anthropic.com/settings/keys
+
+### Qwen API (Alibaba Cloud DashScope)
+```
+/key qwen         → add or update Qwen/DashScope API key
+/key qwen         → type "remove" to delete it
+/model qwen-api   → prompts for API key if not set, switches to Qwen API mode
+```
+
+Get your API key at: https://bailian.console.alibabacloud.com/?apiKey=1
 
 ## What You Can Ask (Natural Language)
 
@@ -167,7 +186,7 @@ read the PDF ~/Documents/report.pdf
 Before any file edit or write, Kodiqa shows a colored diff so you can see exactly what changes before approving.
 
 ### Parallel Tool Execution
-When Claude needs multiple read-only operations (reading files, searching, etc.), they run in parallel for faster results.
+When the AI needs multiple read-only operations (reading files, searching, etc.), they run in parallel for faster results.
 
 ### Conversation Recovery
 Sessions auto-save to `~/.kodiqa/session.json`. If Kodiqa crashes or you close the terminal, next launch offers to resume where you left off.
@@ -213,18 +232,18 @@ Clean UI with animated spinners and colored dots:
 
 ```
 ~/LLMS/kodiqa/
-  kodiqa.py          # Main agent (~800 lines)
+  kodiqa.py          # Main agent (~1600 lines) — Ollama + Claude + Qwen API
   actions.py         # 19 action handlers with diff view (~600 lines)
-  tools.py           # Claude native tool schemas (~300 lines)
+  tools.py           # Tool schemas (~300 lines) — used by Claude & Qwen
   memory.py          # Persistent memory - SQLite
   web.py             # Web search (DuckDuckGo + Google + Google API) + page fetch
-  config.py          # Models, prompts, settings
+  config.py          # Models, prompts, settings (~210 lines)
   requirements.txt   # Dependencies
   venv/              # Python virtual environment
 
 ~/.kodiqa/
   memory.db          # Your memories (persists across sessions)
-  settings.json      # API keys (Claude, Google), default model
+  settings.json      # API keys (Claude, Qwen, Google), default model
   session.json       # Auto-saved conversation for recovery
   input_history      # Arrow-key input history (last 500 commands)
   KODIQA.md          # Global context (always loaded)
@@ -237,7 +256,9 @@ Clean UI with animated spinners and colored dots:
 - Models auto-update on startup (patches only, no re-download if current)
 - New models suggested on startup — pick what you want, skip the rest
 - Use `/model coder` or `/model fast` when you want speed over consensus
-- Use `/model claude` for complex work (requires API key, best quality)
+- Use `/model claude` for complex work (requires Claude API key, best quality)
+- Use `/model qwen-api` for smart + affordable (requires DashScope API key)
+- Use `/model qwen-flash-api` for ultra-cheap API queries ($0.05/M input tokens)
 - Use `/model reason` for math/logic/reasoning problems
 - Use `/multi all` to go back to multi-model consensus mode
 - Use `/scan` before asking about a project so the AI understands the code
@@ -253,4 +274,5 @@ Clean UI with animated spinners and colored dots:
 - Python 3.9+
 - Ollama installed (`/Applications/Ollama.app` on macOS)
 - At least one model pulled (`ollama pull qwen3-coder`)
-- (Optional) Claude API key for smart mode
+- (Optional) Claude API key for Claude models
+- (Optional) DashScope API key for Qwen API models

@@ -26,6 +26,16 @@ CLAUDE_ALIASES = {
 
 CLAUDE_API_URL = "https://api.anthropic.com/v1/messages"
 
+# Qwen API models (Alibaba Cloud DashScope - OpenAI-compatible)
+QWEN_ALIASES = {
+    "qwen-api": "qwen-plus",
+    "qwen-max": "qwen-max",
+    "qwen-coder-api": "qwen3-coder-plus",
+    "qwen-flash-api": "qwen-flash",
+}
+
+QWEN_API_URL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions"
+
 MAX_ITERATIONS = 15
 MAX_FILE_SIZE = 100_000
 COMMAND_TIMEOUT = 120
@@ -79,6 +89,11 @@ def save_settings(settings):
 def is_claude_model(model_name):
     """Check if a model name is a Claude API model."""
     return model_name.startswith("claude-") or model_name in CLAUDE_ALIASES
+
+
+def is_qwen_api_model(model_name):
+    """Check if a model name is a Qwen API model (not local Ollama Qwen)."""
+    return model_name in QWEN_ALIASES or model_name in QWEN_ALIASES.values()
 
 
 SYSTEM_PROMPT = """You are Kodiqa, a powerful AI coding assistant. You help users with software engineering, research, and general tasks.
