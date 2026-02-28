@@ -57,6 +57,7 @@ class Kodiqa:
         self.claude_key = self.settings.get("claude_api_key", "")
         self.session_file = os.path.join(KODIQA_DIR, "session.json")
         self.multi_models = self._discover_models()  # default: multi-model mode
+        self._auto_approved = set()  # action types auto-approved this session
         # Setup readline for arrow keys + input history
         self._history_file = os.path.join(KODIQA_DIR, "input_history")
         try:
@@ -1686,9 +1687,28 @@ class Kodiqa:
 
     def _confirm(self, description):
         self.console.print()
+        # Check if this action type was auto-approved
+        if not hasattr(self, "_auto_approved"):
+            self._auto_approved = set()
+        # Extract action type from description (e.g. "Write file: ..." -> "write file")
+        action_type = description.split(":")[0].strip().lower()
+        if action_type in self._auto_approved:
+            self.console.print(f"  [green]●[/] {description} [dim](auto-approved)[/]")
+            return True
         try:
-            answer = Prompt.ask(f"  [bold yellow]Allow:[/] {description}", choices=["y", "n"], default="y")
-            return answer.lower() == "y"
+            self.console.print(f"  [bold yellow]Allow:[/] {description}")
+            self.console.print(f"    [cyan bold]1.[/] [bold]Yes[/]")
+            self.console.print(f"    [cyan bold]2.[/] [bold]Yes, don't ask again[/] [dim](for this action type)[/]")
+            self.console.print(f"    [cyan bold]3.[/] [bold]No[/]")
+            choice = Prompt.ask("  [bold yellow]Choice[/]", choices=["1", "2", "3"], default="1")
+            if choice == "1":
+                return True
+            elif choice == "2":
+                self._auto_approved.add(action_type)
+                self.console.print(f"  [dim]Auto-approving future \"{action_type}\" actions this session.[/]")
+                return True
+            else:
+                return False
         except (EOFError, KeyboardInterrupt):
             return False
 
