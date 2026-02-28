@@ -340,4 +340,122 @@ CLAUDE_TOOLS = [
             "required": ["path", "old_string", "new_string"]
         }
     },
+    {
+        "name": "create_directory",
+        "description": "Create a directory and any parent directories.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Absolute path to the directory to create"
+                }
+            },
+            "required": ["path"]
+        }
+    },
+    {
+        "name": "move_file",
+        "description": "Move or rename a file or directory.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "source": {
+                    "type": "string",
+                    "description": "Absolute path to the source file/directory"
+                },
+                "destination": {
+                    "type": "string",
+                    "description": "Absolute path to the destination"
+                }
+            },
+            "required": ["source", "destination"]
+        }
+    },
+    {
+        "name": "delete_file",
+        "description": "Delete a file. Requires user confirmation.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Absolute path to the file to delete"
+                }
+            },
+            "required": ["path"]
+        }
+    },
+    {
+        "name": "multi_edit",
+        "description": "Apply multiple edits to a single file in one pass. More efficient than multiple edit_file calls.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Absolute path to the file"
+                },
+                "edits": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "old_string": {
+                                "type": "string",
+                                "description": "Text to find"
+                            },
+                            "new_string": {
+                                "type": "string",
+                                "description": "Replacement text"
+                            }
+                        },
+                        "required": ["old_string", "new_string"]
+                    },
+                    "description": "List of edits to apply sequentially"
+                }
+            },
+            "required": ["path", "edits"]
+        }
+    },
+    {
+        "name": "clipboard_read",
+        "description": "Read the current system clipboard contents.",
+        "input_schema": {
+            "type": "object",
+            "properties": {}
+        }
+    },
+    {
+        "name": "clipboard_write",
+        "description": "Copy text to the system clipboard.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string",
+                    "description": "Text to copy to clipboard"
+                }
+            },
+            "required": ["content"]
+        }
+    },
+    {
+        "name": "diff_apply",
+        "description": "Apply a unified diff/patch to a file.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Absolute path to the file to patch"
+                },
+                "patch": {
+                    "type": "string",
+                    "description": "The unified diff content to apply"
+                }
+            },
+            "required": ["path", "patch"]
+        }
+    },
 ]

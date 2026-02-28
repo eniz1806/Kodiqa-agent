@@ -159,7 +159,7 @@ def execute_tools_parallel(tool_calls, memory, confirm_fn):
     """Execute multiple tool calls in parallel where safe. Returns list of (id, result)."""
     # Separate into safe-to-parallel (read-only) and sequential (needs confirm or writes)
     read_only = {"read_file", "list_dir", "tree", "glob", "grep", "git_status", "git_diff",
-                 "web_search", "web_fetch", "memory_search", "ask_user"}
+                 "web_search", "web_fetch", "memory_search", "ask_user", "clipboard_read"}
 
     parallel_batch = []
     sequential_batch = []
@@ -245,6 +245,13 @@ def _dispatch(name, p, memory):
             p.get("header", ""),
             p.get("multi_select", False),
         ),
+        "create_directory": lambda: do_create_directory(p.get("path", "")),
+        "move_file": lambda: do_move_file(p.get("source", ""), p.get("destination", "")),
+        "delete_file": lambda: do_delete_file(p.get("path", "")),
+        "multi_edit": lambda: do_multi_edit(p.get("path", ""), p.get("edits", [])),
+        "clipboard_read": lambda: do_clipboard_read(),
+        "clipboard_write": lambda: do_clipboard_write(p.get("content", "")),
+        "diff_apply": lambda: do_diff_apply(p.get("path", ""), p.get("patch", "")),
     }
     handler = handlers.get(name)
     if handler:
@@ -261,6 +268,20 @@ def _describe_action(name, params):
         return f"Run command: {params.get('command', '?')}"
     if name == "git_commit":
         return f"Git commit: {params.get('message', '?')}"
+    if name == "create_directory":
+        return f"Create directory: {params.get('path', '?')}"
+    if name == "move_file":
+        return f"Move: {params.get('source', '?')} → {params.get('destination', '?')}"
+    if name == "delete_file":
+        return f"Delete file: {params.get('path', '?')}"
+    if name == "multi_edit":
+        return f"Multi-edit: {params.get('path', '?')} ({len(params.get('edits', []))} edits)"
+    if name == "clipboard_write":
+        return f"Copy to clipboard: {len(params.get('content', ''))} chars"
+    if name == "diff_apply":
+        return f"Apply patch: {params.get('path', '?')}"
+    if name == "search_replace_all":
+        return f"Replace all in: {params.get('path', '?')}"
     return f"{name}: {params}"
 
 
@@ -717,3 +738,138 @@ def do_ask_user(question, options=None, header=None, multi_select=False):
     else:
         answer = Prompt.ask("[bold yellow]Your answer[/]")
         return f"User answered: {answer}"
+
+
+# ── File Management Tools ──
+
+def do_create_directory(path):
+    """Create a directory (and parents)."""
+    path = os.path.expanduser(path)
+    if os.path.isdir(path):
+        return f"Directory already exists: {path}"
+    try:
+        os.makedirs(path, exist_ok=True)
+        return f"Created directory: {path}"
+    except Exception as e:
+        return f"Error creating directory: {e}"
+
+
+def do_move_file(source, destination):
+    """Move or rename a file/directory."""
+    import shutil
+    source = os.path.expanduser(source)
+    destination = os.path.expanduser(destination)
+    if not os.path.exists(source):
+        return f"Source not found: {source}"
+    try:
+        shutil.move(source, destination)
+        return f"Moved {source} → {destination}"
+    except Exception as e:
+        return f"Move error: {e}"
+
+
+def do_delete_file(path):
+    """Delete a file."""
+    path = os.path.expanduser(path)
+    if not os.path.exists(path):
+        return f"Not found: {path}"
+    if os.path.isdir(path):
+        return f"Use run_command to delete directories: {path}"
+    try:
+        os.remove(path)
+        return f"Deleted: {path}"
+    except Exception as e:
+        return f"Delete error: {e}"
+
+
+def do_multi_edit(path, edits):
+    """Apply multiple edits to a single file in one pass."""
+    path = os.path.expanduser(path)
+    if not os.path.isfile(path):
+        return f"File not found: {path}"
+    with open(path, "r") as f:
+        content = f.read()
+    # Save to undo buffer
+    _undo_buffer[os.path.abspath(path)].append(content)
+    if not isinstance(edits, list):
+        return "edits must be a list of {old_string, new_string} objects"
+    applied = 0
+    new_content = content
+    for edit in edits:
+        old = edit.get("old_string", "")
+        new = edit.get("new_string", "")
+        if old and old in new_content:
+            new_content = new_content.replace(old, new, 1)
+            applied += 1
+    if applied == 0:
+        return f"No edits matched in {path}"
+    _show_diff(path, content, new_content)
+    with open(path, "w") as f:
+        f.write(new_content)
+    return f"Applied {applied}/{len(edits)} edits to {path}"
+
+
+def do_clipboard_read():
+    """Read system clipboard contents."""
+    try:
+        result = subprocess.run(["pbpaste"], capture_output=True, text=True, timeout=5)
+        content = result.stdout
+        if not content:
+            return "Clipboard is empty."
+        if len(content) > 50000:
+            content = content[:50000] + "\n... (truncated)"
+        return content
+    except FileNotFoundError:
+        return "Clipboard not available (pbpaste not found)."
+    except Exception as e:
+        return f"Clipboard error: {e}"
+
+
+def do_clipboard_write(content):
+    """Write text to system clipboard."""
+    try:
+        proc = subprocess.Popen(["pbcopy"], stdin=subprocess.PIPE, timeout=5)
+        proc.communicate(input=content.encode("utf-8"))
+        return f"Copied {len(content)} chars to clipboard."
+    except FileNotFoundError:
+        return "Clipboard not available (pbcopy not found)."
+    except Exception as e:
+        return f"Clipboard error: {e}"
+
+
+def do_diff_apply(path, patch):
+    """Apply a unified diff/patch to a file."""
+    path = os.path.expanduser(path)
+    if not os.path.isfile(path):
+        return f"File not found: {path}"
+    with open(path, "r") as f:
+        content = f.read()
+    _undo_buffer[os.path.abspath(path)].append(content)
+    # Parse unified diff and apply
+    lines = content.splitlines(keepends=True)
+    patch_lines = patch.splitlines(keepends=True)
+    result_lines = list(lines)
+    offset = 0
+    for line in patch_lines:
+        line_stripped = line.rstrip("\n")
+        if line_stripped.startswith("@@"):
+            import re as _re
+            m = _re.search(r"@@ -(\d+)", line_stripped)
+            if m:
+                offset = int(m.group(1)) - 1
+    # Simple approach: just apply via subprocess patch if available
+    try:
+        proc = subprocess.run(
+            ["patch", path],
+            input=patch, capture_output=True, text=True, timeout=30,
+        )
+        if proc.returncode == 0:
+            with open(path, "r") as f:
+                new_content = f.read()
+            _show_diff(path, content, new_content)
+            return f"Patch applied to {path}"
+        return f"Patch failed: {proc.stderr}"
+    except FileNotFoundError:
+        return "patch command not found. Install with: brew install gpatch"
+    except Exception as e:
+        return f"Patch error: {e}"

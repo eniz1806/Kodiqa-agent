@@ -17,6 +17,7 @@ from rich.prompt import Prompt
 from rich.status import Status
 
 import logging
+import subprocess
 import time
 
 from config import (
@@ -127,6 +128,143 @@ CLAUDE_SYSTEM = """You are Kodiqa, an expert AI coding assistant running locally
 {memories}"""
 
 
+class StreamWriter:
+    """Filters streaming output: shows text, hides code blocks in compact mode."""
+
+    def __init__(self, console, compact=True):
+        self.console = console
+        self.compact = compact
+        self._buffer = []
+        self._in_fence = False
+        self._fence_lang = ""
+        self._fence_lines = 0
+        self._fence_chars = 0
+        self._pending = ""  # partial line buffer for fence detection
+        self._header_printed = False
+        self._status = None  # live status for code block progress
+        self._action_depth = 0  # track [ACTION:...] blocks
+
+    def write(self, token):
+        """Process a token. Returns the token (always appended to full_text externally)."""
+        if not self.compact:
+            sys.stdout.write(token)
+            sys.stdout.flush()
+            return
+
+        self._pending += token
+
+        # Process complete lines (and partial last line)
+        while "\n" in self._pending:
+            line, self._pending = self._pending.split("\n", 1)
+            self._process_line(line + "\n")
+
+        # If pending has partial content without newline, check for fence markers
+        # but don't output yet (wait for full line)
+        # Exception: if not in fence and no backticks pending, flush text
+        if self._pending and not self._in_fence and not self._in_action():
+            if "```" not in self._pending and "[ACTION" not in self._pending:
+                sys.stdout.write(self._pending)
+                sys.stdout.flush()
+                self._pending = ""
+
+    def _in_action(self):
+        return self._action_depth > 0
+
+    def _process_line(self, line):
+        stripped = line.strip()
+
+        # Track [ACTION:...] blocks (Ollama text mode)
+        if stripped.startswith("[ACTION:"):
+            self._action_depth += 1
+            if self._action_depth == 1:
+                # Extract action name
+                action_name = stripped.split("ACTION:", 1)[1].rstrip("]").strip()
+                self._start_progress(f"Running action: {action_name}")
+            return
+        if stripped == "[/ACTION]":
+            self._action_depth -= 1
+            if self._action_depth <= 0:
+                self._action_depth = 0
+                self._stop_progress()
+            return
+        if self._in_action():
+            # Inside an action block — suppress all output, just count
+            self._fence_lines += 1
+            if self._status:
+                self._status.update(f"  [dim]Action in progress... ({self._fence_lines} lines)[/]")
+            return
+
+        # Check for code fence toggle
+        if stripped.startswith("```"):
+            if not self._in_fence:
+                # Opening fence
+                self._in_fence = True
+                self._fence_lang = stripped[3:].strip().split()[0] if len(stripped) > 3 else ""
+                self._fence_lines = 0
+                self._fence_chars = 0
+                lang_label = f" ({self._fence_lang})" if self._fence_lang else ""
+                self._start_progress(f"Writing code{lang_label}")
+            else:
+                # Closing fence
+                self._in_fence = False
+                lang_label = f" {self._fence_lang}" if self._fence_lang else ""
+                self._stop_progress()
+                self.console.print(
+                    f"  [dim cyan]╰─ code block:{lang_label} {self._fence_lines} lines, "
+                    f"{self._fence_chars:,} chars[/]"
+                )
+                self._fence_lang = ""
+            return
+
+        if self._in_fence:
+            # Inside code fence — suppress output, update counter
+            self._fence_lines += 1
+            self._fence_chars += len(line)
+            if self._status:
+                lang_label = f" ({self._fence_lang})" if self._fence_lang else ""
+                self._status.update(
+                    f"  [dim]Writing code{lang_label}... "
+                    f"{self._fence_lines} lines, {self._fence_chars:,} chars[/]"
+                )
+        else:
+            # Regular text — show it
+            sys.stdout.write(line)
+            sys.stdout.flush()
+
+    def _start_progress(self, label):
+        self._fence_lines = 0
+        self._fence_chars = 0
+        if self._status:
+            self._status.stop()
+        self._status = Status(f"  [dim]{label}...[/]", console=self.console, spinner="dots")
+        self._status.start()
+
+    def _stop_progress(self):
+        if self._status:
+            self._status.stop()
+            self._status = None
+
+    def flush_pending(self):
+        """Flush any remaining buffered content."""
+        if self._pending:
+            if not self._in_fence and not self._in_action():
+                sys.stdout.write(self._pending)
+                sys.stdout.flush()
+            elif self._in_fence:
+                self._fence_lines += 1
+                self._fence_chars += len(self._pending)
+            self._pending = ""
+        self._stop_progress()
+        if self._in_fence:
+            # Unclosed fence
+            lang_label = f" {self._fence_lang}" if self._fence_lang else ""
+            self.console.print(
+                f"  [dim cyan]╰─ code block:{lang_label} {self._fence_lines} lines, "
+                f"{self._fence_chars:,} chars[/]"
+            )
+            self._in_fence = False
+
+
 class Kodiqa:
     def __init__(self):
         self.console = Console()
@@ -161,6 +299,14 @@ class Kodiqa:
             self.model = self.settings.get("default_model", "claude-sonnet-4-20250514")
         else:
             self.model = self.settings.get("default_model", DEFAULT_MODEL)
+        # Shell environment detection
+        self.shell_env = self._detect_shell_env()
+        # Conversation checkpoints
+        self._checkpoints = {}
+        self._checkpoint_dir = os.path.join(KODIQA_DIR, "checkpoints")
+        os.makedirs(self._checkpoint_dir, exist_ok=True)
+        # Compact mode: hide code blocks during streaming (default on)
+        self.compact_mode = True
 
     def _discover_models(self):
         """Auto-discover all installed Ollama models for multi-mode default."""
@@ -171,6 +317,35 @@ class Kodiqa:
             return models if models else []
         except Exception:
             return []
+
+    def _shell_env_context(self):
+        """Format shell environment for system prompt."""
+        if not self.shell_env:
+            return ""
+        parts = [f"- {k}: {v}" for k, v in self.shell_env.items() if k not in ("cwd",)]
+        if parts:
+            return "## Shell Environment\n" + "\n".join(parts)
+        return ""
+
+    def _detect_shell_env(self):
+        """Detect shell environment, OS, and dev tools."""
+        env = {
+            "os": os.uname().sysname,
+            "arch": os.uname().machine,
+            "shell": os.environ.get("SHELL", "unknown"),
+            "python": sys.version.split()[0],
+            "cwd": self.cwd,
+        }
+        # Detect common dev tools
+        for tool in ["git", "node", "npm", "cargo", "go", "java", "docker"]:
+            try:
+                result = subprocess.run([tool, "--version"], capture_output=True, text=True, timeout=5)
+                if result.returncode == 0:
+                    version = result.stdout.strip().split("\n")[0][:50]
+                    env[tool] = version
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                pass
+        return env
 
     def run(self):
         self._first_run_setup()
@@ -577,6 +752,11 @@ class Kodiqa:
                 "[bold]/key[/]           - Add/update API key (Claude or Qwen)\n"
                 "[bold]/tokens[/]        - Show session token usage and cost\n"
                 "[bold]/config[/]        - Show/reload config\n"
+                "[bold]/export[/]        - Export session to markdown\n"
+                "[bold]/checkpoint[/] [n] - Save conversation checkpoint\n"
+                "[bold]/restore[/] [n]   - Restore from checkpoint\n"
+                "[bold]/env[/]           - Show shell environment\n"
+                "[bold]/verbose[/]       - Toggle verbose mode (show/hide code in stream)\n"
                 "[bold]/search[/]        - Switch search engine (google/duckduckgo)\n"
                 "[bold]/cd <path>[/]     - Change working directory\n"
                 "[bold]/quit[/]          - Exit",
@@ -770,14 +950,44 @@ class Kodiqa:
                 self.console.print(f"[dim]Reload: /config reload[/]")
         elif command == "/tokens":
             st = self.session_tokens
+            # Estimate context usage
+            ctx_chars = sum(len(str(m.get("content", ""))) for m in self.history)
+            ctx_est = ctx_chars // 4
             self.console.print(Panel(
                 f"Input tokens:  {st['input']:,}\n"
                 f"Output tokens: {st['output']:,}\n"
                 f"Cache read:    {st['cache_read']:,}\n"
                 f"Cache create:  {st['cache_creation']:,}\n"
-                f"Total cost:    ${st['cost']:.4f}",
+                f"Total cost:    ${st['cost']:.4f}\n"
+                f"Context est:   ~{ctx_est:,} tokens ({len(self.history)} messages)",
                 title="Session Token Usage", border_style="blue",
             ))
+        elif command == "/export":
+            self._export_session()
+        elif command == "/checkpoint":
+            name = arg.strip() if arg else f"cp_{len(self._checkpoints) + 1}"
+            self._save_checkpoint(name)
+        elif command == "/restore":
+            if not arg:
+                # List checkpoints
+                if not self._checkpoints:
+                    self.console.print("[dim]No checkpoints saved. Use /checkpoint <name> to create one.[/]")
+                else:
+                    self.console.print("[bold]Checkpoints:[/]")
+                    for cp_name in self._checkpoints:
+                        msgs = self._checkpoints[cp_name]["count"]
+                        self.console.print(f"  [cyan]{cp_name}[/] ({msgs} messages)")
+            else:
+                self._restore_checkpoint(arg.strip())
+        elif command == "/env":
+            lines = [f"  [cyan]{k}[/]: {v}" for k, v in self.shell_env.items()]
+            self.console.print(Panel("\n".join(lines), title="Shell Environment", border_style="blue"))
+        elif command == "/verbose":
+            self.compact_mode = not self.compact_mode
+            if self.compact_mode:
+                self.console.print("[green]Compact mode ON[/] — code blocks hidden during streaming")
+            else:
+                self.console.print("[yellow]Verbose mode ON[/] — full output shown during streaming")
         else:
             self.console.print(f"[red]Unknown command: {command}. Type /help[/]")
 
@@ -875,10 +1085,11 @@ class Kodiqa:
         if not os.path.isdir(path):
             self.console.print(f"[red]Not a directory: {path}[/]")
             return
-        self.console.print(f"[dim]Scanning {path}...[/]")
         files_content = []
         total_chars = 0
         file_count = 0
+        scan_status = Status(f"  [dim]Scanning {path}...[/]", console=self.console, spinner="dots")
+        scan_status.start()
         for root, dirs, files in os.walk(path):
             dirs[:] = [d for d in dirs if d not in SKIP_DIRS and not d.startswith(".")]
             for fname in sorted(files):
@@ -896,6 +1107,7 @@ class Kodiqa:
                     files_content.append(f"### {rel}\n```\n{content}\n```")
                     total_chars += len(content)
                     file_count += 1
+                    scan_status.update(f"  [dim]Scanning... {file_count} files ({total_chars:,} chars)[/]")
                     if total_chars > 500_000:
                         files_content.append("... (stopped, context limit)")
                         break
@@ -903,6 +1115,7 @@ class Kodiqa:
                     continue
             if total_chars > 500_000:
                 break
+        scan_status.stop()
         if not files_content:
             self.console.print("[yellow]No readable files found.[/]")
             return
@@ -1155,6 +1368,9 @@ class Kodiqa:
             git_ctx = self._git_context()
             if git_ctx:
                 system_prompt += "\n\n" + git_ctx
+            env_ctx = self._shell_env_context()
+            if env_ctx:
+                system_prompt += "\n\n" + env_ctx
             messages = [{"role": "system", "content": system_prompt}] + self.history
 
             assistant_text = self._stream_ollama(messages)
@@ -1195,6 +1411,9 @@ class Kodiqa:
             git_ctx = self._git_context()
             if git_ctx:
                 system_prompt += "\n\n" + git_ctx
+            env_ctx = self._shell_env_context()
+            if env_ctx:
+                system_prompt += "\n\n" + env_ctx
 
             # Build Claude messages (must alternate user/assistant)
             messages = self._build_claude_messages()
@@ -1358,6 +1577,7 @@ class Kodiqa:
 
         # Parse streaming response
         self.console.print()
+        stream_start = time.time()
 
         full_text = []
         tool_calls = []
@@ -1366,6 +1586,7 @@ class Kodiqa:
         stop_reason = "end_turn"
         stream_usage = {}
         first_token = True
+        writer = StreamWriter(self.console, compact=self.compact_mode)
         thinking_status = Status("  [dim]Thinking...[/]", console=self.console, spinner="dots")
         thinking_status.start()
 
@@ -1409,8 +1630,7 @@ class Kodiqa:
                                 self.console.print("[bold green]Kodiqa[/] ", end="")
                                 first_token = False
                             full_text.append(token)
-                            sys.stdout.write(token)
-                            sys.stdout.flush()
+                            writer.write(token)
                     elif delta.get("type") == "input_json_delta":
                         json_chunk = delta.get("partial_json", "")
                         if json_chunk:
@@ -1440,12 +1660,15 @@ class Kodiqa:
 
         except KeyboardInterrupt:
             thinking_status.stop()
+            writer.flush_pending()
             self.console.print("\n[dim](interrupted)[/]")
 
         if first_token:
             thinking_status.stop()
+        writer.flush_pending()
         self.console.print()
-        self._display_token_usage(stream_usage)
+        elapsed = time.time() - stream_start
+        self._display_token_usage(stream_usage, elapsed=elapsed)
         return {"text": "".join(full_text), "tool_calls": tool_calls, "stop_reason": stop_reason}
 
     def _claude_nostream(self, system, messages):
@@ -1498,6 +1721,9 @@ class Kodiqa:
             git_ctx = self._git_context()
             if git_ctx:
                 system_prompt += "\n\n" + git_ctx
+            env_ctx = self._shell_env_context()
+            if env_ctx:
+                system_prompt += "\n\n" + env_ctx
 
             messages = self._build_qwen_messages(system_prompt)
 
@@ -1637,11 +1863,13 @@ class Kodiqa:
 
         # Parse SSE streaming response (OpenAI format)
         self.console.print()
+        stream_start = time.time()
 
         full_text = []
         tool_calls = {}  # index -> {id, name, arguments}
         stream_usage = {}
         first_token = True
+        writer = StreamWriter(self.console, compact=self.compact_mode)
         thinking_status = Status("  [dim]Thinking...[/]", console=self.console, spinner="dots")
         thinking_status.start()
 
@@ -1676,8 +1904,7 @@ class Kodiqa:
                         self.console.print("[bold green]Kodiqa[/] ", end="")
                         first_token = False
                     full_text.append(text_chunk)
-                    sys.stdout.write(text_chunk)
-                    sys.stdout.flush()
+                    writer.write(text_chunk)
 
                 # Tool calls (streamed incrementally)
                 tc_list = delta.get("tool_calls", [])
@@ -1702,12 +1929,15 @@ class Kodiqa:
 
         except KeyboardInterrupt:
             thinking_status.stop()
+            writer.flush_pending()
             self.console.print("\n[dim](interrupted)[/]")
 
         if first_token:
             thinking_status.stop()
+        writer.flush_pending()
         self.console.print()
-        self._display_token_usage(stream_usage)
+        elapsed = time.time() - stream_start
+        self._display_token_usage(stream_usage, elapsed=elapsed)
 
         # Parse accumulated tool calls
         parsed_tools = []
@@ -1801,8 +2031,11 @@ class Kodiqa:
             return None
 
         self.console.print()
+        stream_start = time.time()
         full_text = []
         first_token = True
+        token_count = 0
+        writer = StreamWriter(self.console, compact=self.compact_mode)
         thinking_status = Status("  [dim]Thinking...[/]", console=self.console, spinner="dots")
         thinking_status.start()
         try:
@@ -1822,21 +2055,29 @@ class Kodiqa:
                         self.console.print("[bold green]Kodiqa[/] ", end="")
                         first_token = False
                     full_text.append(token)
-                    sys.stdout.write(token)
-                    sys.stdout.flush()
+                    token_count += 1
+                    writer.write(token)
         except KeyboardInterrupt:
             thinking_status.stop()
+            writer.flush_pending()
             self.console.print("\n[dim](interrupted)[/]")
         if first_token:
             thinking_status.stop()
+        writer.flush_pending()
         self.console.print()
+        elapsed = time.time() - stream_start
+        if token_count > 0:
+            tps = token_count / elapsed if elapsed > 0 else 0
+            self.console.print(f"  [dim]{token_count} tokens | {tps:.1f} tok/s | {elapsed:.1f}s[/]")
         return "".join(full_text)
 
     # ── Shared ──
 
-    def _display_token_usage(self, usage, model=None):
-        """Show token usage and cost after a response."""
+    def _display_token_usage(self, usage, model=None, elapsed=None):
+        """Show token usage, cost, and response metrics after a response."""
         if not usage:
+            if elapsed:
+                self.console.print(f"  [dim]{elapsed:.1f}s[/]")
             return
         model = model or self.model
         inp = usage.get("input_tokens", 0) or usage.get("prompt_tokens", 0)
@@ -1853,9 +2094,82 @@ class Kodiqa:
         parts = [f"[dim]{inp:,} in / {out:,} out[/]"]
         if cache_read:
             parts.append(f"[dim green]cache: {cache_read:,}[/]")
+        if elapsed and out > 0:
+            tps = out / elapsed
+            parts.append(f"[dim]{tps:.1f} tok/s[/]")
+        elif elapsed:
+            parts.append(f"[dim]{elapsed:.1f}s[/]")
         if cost > 0:
             parts.append(f"[dim](${cost:.4f} / session: ${self.session_tokens['cost']:.4f})[/]")
         self.console.print("  " + " | ".join(parts))
+
+    def _export_session(self):
+        """Export the current conversation to a markdown file."""
+        import datetime
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        export_dir = os.path.join(KODIQA_DIR, "exports")
+        os.makedirs(export_dir, exist_ok=True)
+        filepath = os.path.join(export_dir, f"session_{timestamp}.md")
+        lines = [f"# Kodiqa Session — {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}\n"]
+        lines.append(f"Model: {self.model}\n\n---\n")
+        for msg in self.history:
+            role = msg.get("role", "unknown")
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                text_parts = []
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        text_parts.append(block.get("text", ""))
+                    elif isinstance(block, dict) and block.get("type") == "tool_use":
+                        text_parts.append(f"[Tool: {block.get('name', '?')}]")
+                content = "\n".join(text_parts)
+            if role == "user":
+                lines.append(f"## User\n\n{content}\n\n")
+            elif role == "assistant":
+                lines.append(f"## Kodiqa\n\n{content}\n\n")
+            else:
+                lines.append(f"## {role}\n\n{content}\n\n")
+        with open(filepath, "w") as f:
+            f.write("".join(lines))
+        self.console.print(f"  [green]Session exported to {filepath}[/]")
+
+    def _save_checkpoint(self, name):
+        """Save current conversation state as a checkpoint."""
+        import copy
+        self._checkpoints[name] = {
+            "history": copy.deepcopy(self.history),
+            "model": self.model,
+            "count": len(self.history),
+        }
+        # Also save to disk
+        filepath = os.path.join(self._checkpoint_dir, f"{name}.json")
+        with open(filepath, "w") as f:
+            json.dump(self._checkpoints[name], f, default=str)
+        self.console.print(f"  [green]Checkpoint '{name}' saved ({len(self.history)} messages)[/]")
+
+    def _restore_checkpoint(self, name):
+        """Restore conversation from a checkpoint."""
+        if name in self._checkpoints:
+            import copy
+            cp = self._checkpoints[name]
+            self.history = copy.deepcopy(cp["history"])
+            self.model = cp.get("model", self.model)
+            self.console.print(f"  [green]Restored checkpoint '{name}' ({len(self.history)} messages)[/]")
+            return
+        # Try loading from disk
+        filepath = os.path.join(self._checkpoint_dir, f"{name}.json")
+        if os.path.isfile(filepath):
+            try:
+                with open(filepath, "r") as f:
+                    cp = json.load(f)
+                self.history = cp.get("history", [])
+                self.model = cp.get("model", self.model)
+                self._checkpoints[name] = cp
+                self.console.print(f"  [green]Restored checkpoint '{name}' from disk ({len(self.history)} messages)[/]")
+            except Exception as e:
+                self.console.print(f"  [red]Failed to restore checkpoint: {e}[/]")
+        else:
+            self.console.print(f"  [red]Checkpoint '{name}' not found.[/]")
 
     def _confirm(self, description):
         self.console.print()
@@ -1909,6 +2223,13 @@ def _tool_label(name, params):
         "undo_edit": lambda: f"Undo [cyan]{_short_path(p.get('path', '?'))}[/]",
         "search_replace_all": lambda: f"Replace all in [cyan]{_short_path(p.get('path', '?'))}[/]",
         "ask_user": lambda: f"Ask user",
+        "create_directory": lambda: f"Mkdir [cyan]{_short_path(p.get('path', '?'))}[/]",
+        "move_file": lambda: f"Move [cyan]{_short_path(p.get('source', '?'))}[/]",
+        "delete_file": lambda: f"Delete [cyan]{_short_path(p.get('path', '?'))}[/]",
+        "multi_edit": lambda: f"Multi-edit [cyan]{_short_path(p.get('path', '?'))}[/] ({len(p.get('edits', []))} edits)",
+        "clipboard_read": lambda: "Read clipboard",
+        "clipboard_write": lambda: f"Copy to clipboard ({len(p.get('content', ''))} chars)",
+        "diff_apply": lambda: f"Apply patch [cyan]{_short_path(p.get('path', '?'))}[/]",
     }
     fn = labels.get(name)
     if fn:

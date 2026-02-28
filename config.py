@@ -47,7 +47,8 @@ MAX_ITERATIONS = 15
 MAX_FILE_SIZE = 100_000
 COMMAND_TIMEOUT = 120
 
-CONFIRM_ACTIONS = {"write_file", "edit_file", "run_command", "git_commit", "search_replace_all"}
+CONFIRM_ACTIONS = {"write_file", "edit_file", "run_command", "git_commit", "search_replace_all",
+                    "move_file", "delete_file", "multi_edit", "clipboard_write", "diff_apply"}
 
 BLOCKED_COMMANDS = [
     "rm -rf /", "rm -rf /*", "sudo rm -rf",
@@ -226,6 +227,40 @@ path: /absolute/path/to/file
 path: /absolute/path/to/file
 old: text to find everywhere
 new: replacement text
+[/ACTION]
+
+### File Management
+[ACTION: create_directory]
+path: /absolute/path/to/new/dir
+[/ACTION]
+
+[ACTION: move_file]
+source: /absolute/path/to/source
+destination: /absolute/path/to/destination
+[/ACTION]
+
+[ACTION: delete_file]
+path: /absolute/path/to/file
+[/ACTION]
+
+### Multi-Edit (apply multiple edits to one file at once)
+[ACTION: multi_edit]
+path: /absolute/path/to/file
+edits: [{"old_string": "find this", "new_string": "replace with"}, ...]
+[/ACTION]
+
+### Clipboard
+[ACTION: clipboard_read]
+[/ACTION]
+
+[ACTION: clipboard_write]
+content: text to copy
+[/ACTION]
+
+### Patch
+[ACTION: diff_apply]
+path: /absolute/path/to/file
+patch: unified diff content
 [/ACTION]
 
 ### Ask User (use this to clarify before assuming)
