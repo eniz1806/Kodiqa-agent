@@ -1,15 +1,15 @@
 # Kodiqa - Local AI Coding Agent
 
 ## What This Is
-A Claude Code clone that runs 100% locally using free Ollama models, with optional Claude API and Qwen API for smarter responses. Python CLI agent with multi-model consensus, 26 tools, web search, persistent memory, compact streaming mode, and full filesystem access.
+A Claude Code clone that runs 100% locally using free Ollama models, with optional Claude API and Qwen API for smarter responses. Python CLI agent with multi-model consensus, 26 tools, 3 permission modes, plan mode, batch edit review, web search, persistent memory, compact streaming, and full filesystem access.
 
 ## Architecture
 
 ```
-kodiqa.py  (~2200 lines)  Main agent: Kodiqa class, StreamWriter, chat loops, slash commands, Ollama + Claude + Qwen API
-actions.py (~860 lines)   26 action handlers: file ops, git, search, web, memory, clipboard, multi_edit + diff preview
-tools.py   (~480 lines)   Tool schemas (Claude native format, converted to OpenAI format for Qwen)
-config.py  (~280 lines)   Constants, model aliases (Ollama/Claude/Qwen), system prompt, user-editable config
+kodiqa.py  (~2580 lines)  Main agent: Kodiqa class, StreamWriter, chat loops, slash commands, modes, Ollama + Claude + Qwen API
+actions.py (~940 lines)   26 action handlers: file ops, git, search, web, memory, clipboard, multi_edit, edit queue + diff preview
+tools.py   (~460 lines)   Tool schemas (Claude native format, converted to OpenAI format for Qwen)
+config.py  (~290 lines)   Constants, model aliases (Ollama/Claude/Qwen), system prompt, user-editable config
 web.py     (~195 lines)   3 search engines (DuckDuckGo, Google scrape, Google API) + page fetcher
 memory.py  (82 lines)     SQLite-backed persistent memory store
 ```
@@ -49,6 +49,29 @@ memory.py  (82 lines)     SQLite-backed persistent memory store
 | Patch | diff_apply |
 | UX | ask_user |
 
+### Permission Modes (kodiqa.py: `self.permission_mode`)
+- **default** — 3-choice confirmation for all write/command actions (Yes / Yes don't ask again / No)
+- **relaxed** — auto-approve file ops, only confirm commands (run_command, git_commit, delete_file)
+- **auto** — no confirmations, everything auto-approved
+- Toggle with `/mode [default|relaxed|auto]`
+- Implemented in `_confirm()` method
+
+### Plan Mode (kodiqa.py: `self.plan_mode`)
+- Activated with `/plan`
+- Two-phase flow: AI explores + plans (read-only, no writes), user approves/revises/rejects, then AI implements
+- Plan prefix injected into user message in `_chat()`
+- `_show_plan_approval()` presents approve/revise/reject panel
+- State: `self.plan_mode`, `self._pending_plan`, `self._plan_request`
+
+### Batch Edit Review (actions.py + kodiqa.py)
+- Toggle with `/accept` (default ON: `self.batch_edits = True`)
+- When enabled, `set_batch_mode(True)` in actions.py causes file edits to queue instead of apply
+- Edit queue: `_edit_queue` list, manipulated via `set_batch_mode()`, `get_edit_queue()`, `apply_queued_edit()`, `reject_queued_edit()`, `clear_edit_queue()`
+- After AI finishes, `_review_edit_queue()` shows interactive review:
+  - Per-file summary with accept (a) / reject (r) / diff (d) / next (n) / prev (p) controls
+  - Accept All (A) / Reject All (R) / quit (q)
+- Wired into all 3 chat loops (Ollama, Claude, Qwen)
+
 ### Compact Streaming Mode (kodiqa.py: StreamWriter)
 - Default ON (`self.compact_mode = True`), toggle with `/verbose`
 - `StreamWriter` class intercepts streaming output token-by-token
@@ -56,11 +79,6 @@ memory.py  (82 lines)     SQLite-backed persistent memory store
 - **Text/explanations** — shown normally as they stream
 - **Code blocks** — hidden, replaced with live spinner showing line count + char count
 - **ACTION blocks** — hidden with progress indicator (Ollama text mode)
-
-### Confirmation System (3-choice)
-1. **Yes** — approve this action
-2. **Yes, don't ask again** — auto-approve this action type for the session
-3. **No** — deny the action
 
 ### Parallel Execution (actions.py)
 Read-only tools run in `ThreadPoolExecutor(max_workers=4)`. Write/command tools run sequentially with user confirmation.
@@ -96,7 +114,7 @@ Models queried **sequentially** (one at a time, `keep_alive: 0` to free RAM). A 
 - `~/.kodiqa/exports/` — exported session markdown files
 - `~/.kodiqa/error.log` — error log
 
-### Slash Commands
+### Slash Commands (27 total)
 | Command | Description |
 |---------|-------------|
 | `/model <name>` | Switch model (local: fast, qwen, coder, reason, gpt; Claude: claude, sonnet, haiku, opus; Qwen: qwen-api, qwen-max, qwen-coder-api, qwen-flash-api) |
@@ -117,6 +135,9 @@ Models queried **sequentially** (one at a time, `keep_alive: 0` to free RAM). A 
 | `/restore [name]` | Restore from checkpoint |
 | `/env` | Show shell environment |
 | `/verbose` | Toggle compact/verbose streaming |
+| `/mode [mode]` | Set permission mode (default/relaxed/auto) |
+| `/plan` | Toggle plan mode |
+| `/accept` | Toggle batch edit review |
 | `/search` | Switch search engine |
 | `/cd <path>` | Change working directory |
 | `/help` | Show help |

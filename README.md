@@ -19,7 +19,9 @@ source ~/LLMS/kodiqa/venv/bin/activate && python ~/LLMS/kodiqa/kodiqa.py
 - **3 API providers** — Ollama (local/free), Claude API, Qwen API (DashScope)
 - **Compact streaming** — hides code output, shows progress instead (toggle with `/verbose`)
 - **Multi-model consensus** — query all models, merge best answers
-- **3-choice confirmation** — Yes / Yes don't ask again / No
+- **3 permission modes** — default (confirm all), relaxed (auto file ops), auto (no confirms)
+- **Plan mode** — AI explores + plans, you approve, then it implements
+- **Batch edit review** — queue edits, accept/reject per file interactively
 - **Token tracking** — cost per response, session totals, tok/s speed
 - **Prompt caching** — Claude API cache for faster + cheaper responses
 - **Auto-retry** — exponential backoff on API errors (429, 5xx, timeouts)
@@ -55,10 +57,45 @@ source ~/LLMS/kodiqa/venv/bin/activate && python ~/LLMS/kodiqa/kodiqa.py
 | `/restore [n]` | Restore checkpoint (no arg = list all) |
 | `/env` | Show detected shell environment |
 | `/verbose` | Toggle compact/verbose streaming |
+| `/mode [mode]` | Set permission mode (default/relaxed/auto) |
+| `/plan` | Toggle plan mode (explore → approve → implement) |
+| `/accept` | Toggle batch edit review |
 | `/search <engine>` | Switch search engine (duckduckgo/google/api) |
 | `/cd <path>` | Change working directory |
 | `/help` | Show help |
 | `/quit` | Exit |
+
+## Permission Modes
+
+| Mode | Behavior |
+|------|----------|
+| `default` | 3-choice confirmation for all writes/commands (Yes / Yes don't ask again / No) |
+| `relaxed` | Auto-approve file operations, only confirm commands + deletes |
+| `auto` | No confirmations — everything auto-approved |
+
+Switch with `/mode relaxed` or `/mode auto`. Default is `default`.
+
+## Plan Mode
+
+Activate with `/plan`. The AI will:
+1. **Explore** — read files, search, analyze (no writes allowed)
+2. **Present plan** — show what it intends to do
+3. **You decide** — approve, revise, or reject
+4. **Implement** — on approval, AI executes the plan
+
+## Batch Edit Review
+
+When enabled (default ON, toggle with `/accept`), file edits are queued and presented for review after the AI finishes:
+
+```
+╭── Edit Review (3 edits) ──╮
+│ [1/3] Write: src/app.js   │
+│ (a)ccept (r)eject (d)iff  │
+│ (A)ccept All (R)eject All │
+╰───────────────────────────╯
+```
+
+Navigate with `n`/`p`, view diffs with `d`, accept/reject individually or in bulk.
 
 ## Model Shortcuts
 
@@ -194,7 +231,7 @@ find any bugs in this code
 - **Auto-approved**: reading files, listing dirs, searching, web, memory, clipboard read, undo
 - **Asks permission**: writing/editing files, running commands, git commits, delete, move, clipboard write, patches
 - **Blocked**: `rm -rf /`, `sudo rm`, `mkfs`, `dd`, fork bombs, etc.
-- **3-choice confirm**: Yes / Yes don't ask again (per action type) / No
+- **Permission modes**: `/mode default` (confirm all) → `/mode relaxed` (auto file ops) → `/mode auto` (no confirms)
 
 ## 26 Tools
 
@@ -215,10 +252,10 @@ find any bugs in this code
 
 ```
 ~/LLMS/kodiqa/
-  kodiqa.py          # Main agent (~2200 lines)
-  actions.py         # 26 action handlers (~860 lines)
-  tools.py           # Tool schemas (~480 lines)
-  config.py          # Config, aliases, system prompt (~280 lines)
+  kodiqa.py          # Main agent (~2580 lines)
+  actions.py         # 26 action handlers (~940 lines)
+  tools.py           # Tool schemas (~460 lines)
+  config.py          # Config, aliases, system prompt (~290 lines)
   web.py             # Web search + page fetch (~195 lines)
   memory.py          # SQLite persistent memory (82 lines)
   requirements.txt   # Dependencies
@@ -241,6 +278,9 @@ find any bugs in this code
 
 - Default is **compact mode** — code hidden during streaming, progress shown instead
 - Use `/verbose` when you want to see code as it streams
+- Use `/mode relaxed` to skip file edit confirmations
+- Use `/plan` for complex tasks — review the plan before implementation
+- Use `/accept` to toggle batch edit review on/off
 - Use `/checkpoint` before risky operations, `/restore` to roll back
 - Use `/export` to save a conversation for later reference
 - Use `/tokens` to monitor API costs

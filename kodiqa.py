@@ -29,7 +29,10 @@ from config import (
     is_claude_model, is_qwen_api_model,
 )
 from memory import MemoryStore
-from actions import parse_actions, execute_action, execute_tool_call, execute_tools_parallel, set_console
+from actions import (
+    parse_actions, execute_action, execute_tool_call, execute_tools_parallel, set_console,
+    set_batch_mode, get_edit_queue, clear_edit_queue, apply_queued_edit, reject_queued_edit,
+)
 from web import set_search_engine, get_search_engine, set_google_api_keys, get_google_api_keys
 from tools import CLAUDE_TOOLS
 
@@ -307,6 +310,17 @@ class Kodiqa:
         os.makedirs(self._checkpoint_dir, exist_ok=True)
         # Compact mode: hide code blocks during streaming (default on)
         self.compact_mode = True
+        # Permission mode: "default" | "relaxed" | "auto"
+        #   default = confirm all writes/edits/commands (current behavior)
+        #   relaxed = auto-approve file edits/writes, confirm commands only
+        #   auto    = no confirmations at all
+        self.permission_mode = "default"
+        # Plan mode: AI explores + plans before implementing
+        self.plan_mode = False
+        self._pending_plan = None
+        self._plan_request = None
+        # Edit queue: batch review mode for file edits
+        self.batch_edits = True  # when True, queue edits for batch review
 
     def _discover_models(self):
         """Auto-discover all installed Ollama models for multi-mode default."""
@@ -757,6 +771,9 @@ class Kodiqa:
                 "[bold]/restore[/] [n]   - Restore from checkpoint\n"
                 "[bold]/env[/]           - Show shell environment\n"
                 "[bold]/verbose[/]       - Toggle verbose mode (show/hide code in stream)\n"
+                "[bold]/mode[/] <mode>   - Permission mode: default/relaxed/auto\n"
+                "[bold]/plan[/]          - Toggle plan mode (explore → plan → approve → implement)\n"
+                "[bold]/accept[/]        - Toggle batch edit review (accept/reject per file)\n"
                 "[bold]/search[/]        - Switch search engine (google/duckduckgo)\n"
                 "[bold]/cd <path>[/]     - Change working directory\n"
                 "[bold]/quit[/]          - Exit",
@@ -988,6 +1005,47 @@ class Kodiqa:
                 self.console.print("[green]Compact mode ON[/] — code blocks hidden during streaming")
             else:
                 self.console.print("[yellow]Verbose mode ON[/] — full output shown during streaming")
+        elif command == "/mode":
+            if not arg:
+                mode_desc = {"default": "confirm all writes/edits/commands",
+                             "relaxed": "auto-approve file ops, confirm commands only",
+                             "auto": "no confirmations"}
+                self.console.print(f"Current mode: [bold cyan]{self.permission_mode}[/] — {mode_desc[self.permission_mode]}")
+                self.console.print("[dim]Usage: /mode default | /mode relaxed | /mode auto[/]")
+            elif arg.strip().lower() in ("default", "relaxed", "auto"):
+                self.permission_mode = arg.strip().lower()
+                labels = {"default": "[green]Default[/] — confirm all writes/edits/commands",
+                          "relaxed": "[yellow]Relaxed[/] — auto-approve file ops, confirm commands only",
+                          "auto": "[red]Auto[/] — no confirmations (be careful!)"}
+                self.console.print(f"  Permission mode: {labels[self.permission_mode]}")
+            else:
+                self.console.print("[red]Unknown mode. Use: default, relaxed, or auto[/]")
+        elif command == "/plan":
+            if self.plan_mode:
+                self.console.print("[dim]Already in plan mode. Type your request to get a plan.[/]")
+            else:
+                self.plan_mode = True
+                self._pending_plan = None
+                self.console.print(Panel(
+                    "[bold]Plan mode ON[/]\n\n"
+                    "The AI will now:\n"
+                    "  1. Explore the codebase\n"
+                    "  2. Design a step-by-step plan\n"
+                    "  3. Show the plan for your approval\n"
+                    "  4. Only implement after you approve\n\n"
+                    "Type your request, or [bold]/plan off[/] to exit plan mode.",
+                    border_style="magenta", title="Plan Mode",
+                ))
+            if arg and arg.strip().lower() == "off":
+                self.plan_mode = False
+                self._pending_plan = None
+                self.console.print("[dim]Plan mode OFF — back to normal mode.[/]")
+        elif command == "/accept":
+            self.batch_edits = not self.batch_edits
+            if self.batch_edits:
+                self.console.print("[green]Batch edit review ON[/] — edits queued for review before applying")
+            else:
+                self.console.print("[yellow]Batch edit review OFF[/] — edits applied one at a time")
         else:
             self.console.print(f"[red]Unknown command: {command}. Type /help[/]")
 
@@ -1189,6 +1247,44 @@ class Kodiqa:
 
     def _chat(self, user_msg):
         self._auto_compact_if_needed()
+
+        # Plan mode: intercept to handle planning flow
+        if self.plan_mode and self._pending_plan is None:
+            # Phase 1: Ask AI to explore and plan (no writes)
+            plan_prefix = (
+                "[PLAN MODE] You are in planning mode. Do NOT write or edit any files yet. "
+                "Instead:\n"
+                "1. Read and explore the relevant files to understand the codebase\n"
+                "2. Design a clear, step-by-step implementation plan\n"
+                "3. List every file you'll create or modify\n"
+                "4. End your response with the complete plan\n\n"
+                "User request: "
+            )
+            self._plan_request = user_msg
+            user_msg = plan_prefix + user_msg
+            # Temporarily force default mode to prevent accidental writes
+            old_mode = self.permission_mode
+            self.permission_mode = "default"
+            self._dispatch_chat(user_msg)
+            self.permission_mode = old_mode
+            # After plan response, show approval
+            self._show_plan_approval()
+            return
+
+        if self.plan_mode and self._pending_plan == "approved":
+            # Phase 2: User approved the plan — execute it
+            self.plan_mode = False
+            self._pending_plan = None
+            user_msg = (
+                f"The user has approved your plan. Now implement it step by step. "
+                f"Original request: {self._plan_request}"
+            )
+            self._plan_request = None
+
+        self._dispatch_chat(user_msg)
+
+    def _dispatch_chat(self, user_msg):
+        """Route to the correct provider chat method."""
         if self.multi_models:
             self._chat_multi(user_msg)
         elif is_claude_model(self.model):
@@ -1197,6 +1293,173 @@ class Kodiqa:
             self._chat_qwen(user_msg)
         else:
             self._chat_ollama(user_msg)
+
+    def _review_edit_queue(self):
+        """Show batch edit review panel — cycle through queued edits, accept/reject each."""
+        queue = get_edit_queue()
+        if not queue:
+            return []
+
+        self.console.print()
+        total = len(queue)
+        self.console.print(Panel(
+            f"[bold]{total} file edit{'s' if total > 1 else ''}[/] queued for review.\n\n"
+            "  [cyan bold]a[/] accept    [cyan bold]r[/] reject    [cyan bold]A[/] accept all    [cyan bold]R[/] reject all\n"
+            "  [cyan bold]n[/] next      [cyan bold]p[/] prev      [cyan bold]d[/] show diff     [cyan bold]q[/] finish",
+            border_style="green", title="Edit Review",
+        ))
+
+        decisions = [None] * total  # None = pending, True = accepted, False = rejected
+        current = 0
+
+        while True:
+            entry = queue[current]
+            path = entry["path"]
+            etype = entry["type"]
+            desc = entry["description"]
+
+            # Status indicator
+            status_icon = "[dim]?[/]"
+            if decisions[current] is True:
+                status_icon = "[green]✓[/]"
+            elif decisions[current] is False:
+                status_icon = "[red]✗[/]"
+
+            self.console.print(
+                f"\n  {status_icon} [bold]({current + 1}/{total})[/] [cyan]{os.path.basename(path)}[/] "
+                f"[dim]— {etype}: {desc}[/]"
+            )
+
+            # Show summary
+            old = entry.get("old_content", "")
+            new = entry.get("new_content", "")
+            if old:
+                old_lines = len(old.splitlines())
+                new_lines = len(new.splitlines())
+                added = max(0, new_lines - old_lines)
+                removed = max(0, old_lines - new_lines)
+                self.console.print(f"    [green]+{added}[/] [red]-{removed}[/] lines | {len(new):,} chars")
+            else:
+                self.console.print(f"    [green]+ new file[/] | {len(new):,} chars")
+
+            try:
+                choice = Prompt.ask(
+                    f"  [bold green]({current + 1}/{total})[/]",
+                    default="a"
+                ).strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                choice = "q"
+
+            if choice == "a":
+                decisions[current] = True
+                self.console.print(f"    [green]✓ Accepted[/]")
+                if current < total - 1:
+                    current += 1
+                elif all(d is not None for d in decisions):
+                    break
+            elif choice == "r":
+                decisions[current] = False
+                self.console.print(f"    [red]✗ Rejected[/]")
+                if current < total - 1:
+                    current += 1
+                elif all(d is not None for d in decisions):
+                    break
+            elif choice.upper() == "A":
+                for i in range(total):
+                    if decisions[i] is None:
+                        decisions[i] = True
+                self.console.print(f"  [green]✓ All {total} edits accepted[/]")
+                break
+            elif choice.upper() == "R":
+                for i in range(total):
+                    if decisions[i] is None:
+                        decisions[i] = False
+                self.console.print(f"  [red]✗ All {total} edits rejected[/]")
+                break
+            elif choice == "n":
+                current = (current + 1) % total
+            elif choice == "p":
+                current = (current - 1) % total
+            elif choice == "d":
+                # Show full diff
+                import difflib
+                old_lines = old.splitlines(keepends=True) if old else []
+                new_lines = new.splitlines(keepends=True)
+                diff = difflib.unified_diff(
+                    old_lines, new_lines,
+                    fromfile=f"a/{os.path.basename(path)}",
+                    tofile=f"b/{os.path.basename(path)}",
+                )
+                diff_text = list(diff)
+                for line in diff_text[:80]:
+                    line = line.rstrip("\n")
+                    if line.startswith("+++") or line.startswith("---"):
+                        self.console.print(f"    [bold]{line}[/]")
+                    elif line.startswith("@@"):
+                        self.console.print(f"    [cyan]{line}[/]")
+                    elif line.startswith("+"):
+                        self.console.print(f"    [green]{line}[/]")
+                    elif line.startswith("-"):
+                        self.console.print(f"    [red]{line}[/]")
+                    else:
+                        self.console.print(f"    [dim]{line}[/]")
+                if len(diff_text) > 80:
+                    self.console.print(f"    [dim]... ({len(diff_text) - 80} more lines)[/]")
+            elif choice == "q":
+                # Mark remaining as rejected
+                for i in range(total):
+                    if decisions[i] is None:
+                        decisions[i] = False
+                break
+
+        # Apply accepted edits
+        applied = 0
+        rejected = 0
+        results = []
+        for i, decision in enumerate(decisions):
+            if decision:
+                result = apply_queued_edit(i)
+                results.append(result)
+                applied += 1
+            else:
+                results.append(reject_queued_edit(i))
+                rejected += 1
+
+        self.console.print(
+            f"\n  [bold]Result:[/] [green]{applied} applied[/] / [red]{rejected} rejected[/]"
+        )
+        clear_edit_queue()
+        return results
+
+    def _show_plan_approval(self):
+        """Show plan approval panel after AI has written a plan."""
+        self.console.print()
+        self.console.print(Panel(
+            "[bold]Plan complete![/] Review the plan above, then choose:\n\n"
+            "  [cyan bold]1.[/] [bold]Approve[/] — implement the plan now\n"
+            "  [cyan bold]2.[/] [bold]Revise[/] — give feedback and get a revised plan\n"
+            "  [cyan bold]3.[/] [bold]Reject[/] — cancel and exit plan mode",
+            border_style="magenta", title="Plan Approval",
+        ))
+        try:
+            choice = Prompt.ask("[bold magenta]Choice[/]", choices=["1", "2", "3"], default="1")
+            if choice == "1":
+                self._pending_plan = "approved"
+                self.console.print("[green]Plan approved! Implementing...[/]")
+                self._chat("")  # Trigger phase 2
+            elif choice == "2":
+                self._pending_plan = None  # Reset to allow re-plan
+                feedback = input("\033[1;36mFeedback: \033[0m")
+                if feedback.strip():
+                    self._chat(f"Revise the plan based on this feedback: {feedback}")
+            else:
+                self.plan_mode = False
+                self._pending_plan = None
+                self._plan_request = None
+                self.console.print("[dim]Plan rejected. Back to normal mode.[/]")
+        except (EOFError, KeyboardInterrupt):
+            self.plan_mode = False
+            self._pending_plan = None
 
     # ── Multi-model chat ──
 
@@ -1382,6 +1645,9 @@ class Kodiqa:
             if not actions:
                 self._save_session()
                 break
+            # Enable batch mode if active
+            if self.batch_edits:
+                set_batch_mode(True)
             results = []
             for action in actions:
                 action_label = _tool_label(action['name'], action.get('params', {}))
@@ -1391,6 +1657,13 @@ class Kodiqa:
                         result = result[:20000] + "\n... (truncated)"
                     results.append(f"[Result of {action['name']}]\n{result}")
                 self.console.print(f"  [green]●[/] {action_label}")
+            # Review queued edits if any
+            if self.batch_edits and get_edit_queue():
+                set_batch_mode(False)
+                review_results = self._review_edit_queue()
+                for rr in review_results:
+                    results.append(f"[Edit Review]\n{rr}")
+            set_batch_mode(False)
             self.history.append({"role": "user", "content": f"[Action Results]\n" + "\n\n".join(results)})
             if iteration < MAX_ITERATIONS - 1:
                 self.console.print(f"  [dim]({iteration + 1}/{MAX_ITERATIONS} iterations)[/]")
@@ -1443,6 +1716,10 @@ class Kodiqa:
                 self._save_session()
                 break  # No tools = done
 
+            # Enable batch mode if active
+            if self.batch_edits:
+                set_batch_mode(True)
+
             # Execute tools - parallel for read-only, sequential for writes
             if len(tool_calls) > 1:
                 with Status(f"  [yellow]●[/] Running {len(tool_calls)} tools...", console=self.console, spinner="dots"):
@@ -1461,6 +1738,15 @@ class Kodiqa:
                         result = result[:20000] + "\n... (truncated)"
                     results_list.append((tc["id"], result))
                 self.console.print(f"  [green]●[/] {label}")
+
+            # Review queued edits if any
+            if self.batch_edits and get_edit_queue():
+                set_batch_mode(False)
+                review_results = self._review_edit_queue()
+                # Add review results to tool results
+                for rr in review_results:
+                    results_list.append(("review", rr))
+            set_batch_mode(False)
 
             # Build tool results - handle images specially for Claude vision
             tool_results = []
@@ -1751,6 +2037,10 @@ class Kodiqa:
                 self._save_session()
                 break
 
+            # Enable batch mode if active
+            if self.batch_edits:
+                set_batch_mode(True)
+
             # Execute tools (reuse Claude's parallel execution)
             if len(tool_calls) > 1:
                 with Status(f"  [yellow]●[/] Running {len(tool_calls)} tools...", console=self.console, spinner="dots"):
@@ -1769,6 +2059,14 @@ class Kodiqa:
                         result = result[:20000] + "\n... (truncated)"
                     results_list.append((tc["id"], result))
                 self.console.print(f"  [green]●[/] {label}")
+
+            # Review queued edits if any
+            if self.batch_edits and get_edit_queue():
+                set_batch_mode(False)
+                review_results = self._review_edit_queue()
+                for rr in review_results:
+                    results_list.append(("review", rr))
+            set_batch_mode(False)
 
             # Add tool results as separate messages (OpenAI format)
             for tc_id, result in results_list:
@@ -2173,14 +2471,28 @@ class Kodiqa:
 
     def _confirm(self, description):
         self.console.print()
+        # Extract action type from description (e.g. "Write file: ..." -> "write file")
+        action_type = description.split(":")[0].strip().lower()
+
+        # Auto mode: approve everything
+        if self.permission_mode == "auto":
+            self.console.print(f"  [green]●[/] {description} [dim](auto mode)[/]")
+            return True
+
+        # Relaxed mode: approve file ops, confirm commands/git only
+        if self.permission_mode == "relaxed":
+            command_types = {"run command", "git commit", "delete file"}
+            if action_type not in command_types:
+                self.console.print(f"  [green]●[/] {description} [dim](relaxed mode)[/]")
+                return True
+
         # Check if this action type was auto-approved
         if not hasattr(self, "_auto_approved"):
             self._auto_approved = set()
-        # Extract action type from description (e.g. "Write file: ..." -> "write file")
-        action_type = description.split(":")[0].strip().lower()
         if action_type in self._auto_approved:
             self.console.print(f"  [green]●[/] {description} [dim](auto-approved)[/]")
             return True
+
         try:
             self.console.print(f"  [bold yellow]Allow:[/] {description}")
             self.console.print(f"    [cyan bold]1.[/] [bold]Yes[/]")

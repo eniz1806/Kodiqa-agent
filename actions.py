@@ -23,6 +23,46 @@ _logger = logging.getLogger("kodiqa")
 # Per-file undo stack: {filepath: deque([(old_content), ...], maxlen=N)}
 _undo_buffer = defaultdict(lambda: deque(maxlen=10))
 
+# Edit queue for batch review mode
+_edit_queue = []  # list of {"path": ..., "old": ..., "new": ..., "type": "write"|"edit"|...}
+_batch_mode = False
+
+
+def set_batch_mode(enabled):
+    global _batch_mode
+    _batch_mode = enabled
+
+
+def get_edit_queue():
+    return list(_edit_queue)
+
+
+def clear_edit_queue():
+    _edit_queue.clear()
+
+
+def apply_queued_edit(index):
+    """Apply a single queued edit by index."""
+    if index < 0 or index >= len(_edit_queue):
+        return "Invalid edit index"
+    entry = _edit_queue[index]
+    path = entry["path"]
+    # Save to undo buffer
+    old = entry.get("old_content", "")
+    _undo_buffer[os.path.abspath(path)].append(old if old else None)
+    # Write the new content
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w") as f:
+        f.write(entry["new_content"])
+    return f"Applied: {path}"
+
+
+def reject_queued_edit(index):
+    """Reject (skip) a queued edit."""
+    if index < 0 or index >= len(_edit_queue):
+        return "Invalid edit index"
+    return f"Rejected: {_edit_queue[index]['path']}"
+
 
 def set_console(console):
     global _console
@@ -314,6 +354,16 @@ def do_write_file(path, content):
                 old_content = f.read()
         except Exception:
             pass
+    # Batch mode: queue the edit for review instead of applying
+    if _batch_mode:
+        _edit_queue.append({
+            "path": path,
+            "type": "write",
+            "old_content": old_content if old_content else "",
+            "new_content": content,
+            "description": f"Write {len(content)} chars to {path}" + (" (new file)" if not old_content else ""),
+        })
+        return f"[queued] Write to {path} ({len(content)} chars)"
     # Save to undo buffer before writing
     _undo_buffer[os.path.abspath(path)].append(old_content if old_content else None)
     if old_content:
@@ -335,10 +385,20 @@ def do_edit_file(path, old_text, new_text):
         content = f.read()
     if old_text not in content:
         return f"Text not found in {path}. Make sure the old text matches exactly."
+    new_content = content.replace(old_text, new_text, 1)
+    count = content.count(old_text)
+    # Batch mode: queue the edit for review instead of applying
+    if _batch_mode:
+        _edit_queue.append({
+            "path": path,
+            "type": "edit",
+            "old_content": content,
+            "new_content": new_content,
+            "description": f"Edit {path} ({count} occurrence{'s' if count > 1 else ''})",
+        })
+        return f"[queued] Edit {path}"
     # Save to undo buffer before editing
     _undo_buffer[os.path.abspath(path)].append(content)
-    count = content.count(old_text)
-    new_content = content.replace(old_text, new_text, 1)
     _show_diff(path, content, new_content)
     with open(path, "w") as f:
         f.write(new_content)
@@ -380,10 +440,17 @@ def do_edit_file_all(path, old_text, new_text):
         content = f.read()
     if old_text not in content:
         return f"Text not found in {path}. Make sure the old text matches exactly."
-    # Save to undo buffer
-    _undo_buffer[os.path.abspath(path)].append(content)
     count = content.count(old_text)
     new_content = content.replace(old_text, new_text)
+    # Batch mode
+    if _batch_mode:
+        _edit_queue.append({
+            "path": path, "type": "replace_all",
+            "old_content": content, "new_content": new_content,
+            "description": f"Replace all ({count}x) in {path}",
+        })
+        return f"[queued] Replace all in {path}"
+    _undo_buffer[os.path.abspath(path)].append(content)
     _show_diff(path, content, new_content)
     with open(path, "w") as f:
         f.write(new_content)
