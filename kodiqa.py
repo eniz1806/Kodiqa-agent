@@ -483,8 +483,10 @@ class Kodiqa:
         self._first_run_setup()
         self._detect_git()
         self._load_session()
+        self._welcome_shown = False
         self._check_updates()
-        self._welcome()
+        if not self._welcome_shown:
+            self._welcome()
         try:
             while True:
                 try:
@@ -855,6 +857,10 @@ class Kodiqa:
 
             if updated_count > 0:
                 self.console.print(f"\n[green]{updated_count} model(s) updated![/]")
+
+        # Show welcome before new models list
+        self._welcome()
+        self._welcome_shown = True
 
         # 2. Fetch available models from Ollama library
         new_models = self._fetch_ollama_library(installed)
