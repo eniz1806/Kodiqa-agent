@@ -1379,33 +1379,42 @@ class Kodiqa:
         return extra_claude, extra_qwen
 
     def _list_models(self):
+        choices = []  # (display_name, model_id)
+        n = 0
         lines = []
         if self.claude_key:
-            lines.append("[bold yellow]Claude API Models:[/]")
+            lines.append("[bold yellow]Claude API:[/]")
             for alias, model in CLAUDE_ALIASES.items():
-                marker = " [green]◀ current[/]" if model == self.model else ""
-                lines.append(f"  [cyan]{model}[/] (/{alias}){marker}")
-            # Show any extra live models not in aliases
+                n += 1
+                choices.append(model)
+                marker = " [cyan]◀[/]" if model == self.model else ""
+                lines.append(f"  [dim]{n:>3}.[/] [cyan]{model}[/] [dim](/{alias})[/]{marker}")
             extra_claude, _ = self._get_api_model_choices()
             if extra_claude:
                 lines.append("  [dim]── additional (from API) ──[/]")
                 for m in extra_claude:
-                    marker = " [green]◀ current[/]" if m == self.model else ""
-                    lines.append(f"  [cyan]{m}[/] [dim](use full name)[/]{marker}")
+                    n += 1
+                    choices.append(m)
+                    marker = " [cyan]◀[/]" if m == self.model else ""
+                    lines.append(f"  [dim]{n:>3}.[/] [cyan]{m}[/]{marker}")
             lines.append("")
         if self.qwen_key:
-            lines.append("[bold blue]Qwen API Models:[/]")
+            lines.append("[bold blue]Qwen API:[/]")
             for alias, model in QWEN_ALIASES.items():
-                marker = " [green]◀ current[/]" if model == self.model else ""
-                lines.append(f"  [cyan]{model}[/] (/{alias}){marker}")
+                n += 1
+                choices.append(model)
+                marker = " [cyan]◀[/]" if model == self.model else ""
+                lines.append(f"  [dim]{n:>3}.[/] [cyan]{model}[/] [dim](/{alias})[/]{marker}")
             _, extra_qwen = self._get_api_model_choices()
             if extra_qwen:
                 lines.append("  [dim]── additional (from API) ──[/]")
                 for m in extra_qwen:
-                    marker = " [green]◀ current[/]" if m == self.model else ""
-                    lines.append(f"  [cyan]{m}[/] [dim](use full name)[/]{marker}")
+                    n += 1
+                    choices.append(m)
+                    marker = " [cyan]◀[/]" if m == self.model else ""
+                    lines.append(f"  [dim]{n:>3}.[/] [cyan]{m}[/]{marker}")
             lines.append("")
-        lines.append("[bold green]Local Ollama Models:[/]")
+        lines.append("[bold green]Local Ollama:[/]")
         try:
             resp = requests.get(f"{OLLAMA_URL}/api/tags", timeout=5)
             resp.raise_for_status()
@@ -1415,13 +1424,37 @@ class Kodiqa:
             else:
                 for m in models:
                     name = m["name"]
+                    n += 1
+                    choices.append(name)
                     size = m.get("size", 0)
                     size_str = f"{size / 1e9:.1f}GB" if size > 1e9 else f"{size / 1e6:.0f}MB"
-                    marker = " [green]◀ current[/]" if name == self.model else ""
-                    lines.append(f"  [cyan]{name}[/] ({size_str}){marker}")
+                    marker = " [cyan]◀[/]" if name == self.model else ""
+                    lines.append(f"  [dim]{n:>3}.[/] [cyan]{name}[/] [dim]({size_str})[/]{marker}")
         except Exception:
             lines.append("  [dim]Can't reach Ollama (not running?)[/]")
         self.console.print(Panel("\n".join(lines), title="Available Models", border_style="blue"))
+        # Let user pick by number
+        if choices:
+            try:
+                pick = Prompt.ask("[bold]Pick a model[/] (number or 'skip')")
+            except (EOFError, KeyboardInterrupt):
+                return
+            pick = pick.strip()
+            if pick.lower() in ("skip", ""):
+                return
+            if pick.isdigit() and 1 <= int(pick) <= len(choices):
+                new_model = choices[int(pick) - 1]
+                self.model = new_model
+                self.multi_models = []
+                if is_claude_model(self.model):
+                    provider = "[yellow]Claude API[/]"
+                elif is_qwen_api_model(self.model):
+                    provider = "[blue]Qwen API[/]"
+                else:
+                    provider = "[green]Local[/]"
+                self.console.print(f"Switched to [cyan]{self.model}[/] ({provider})")
+            else:
+                self.console.print(f"[dim]Invalid choice.[/]")
 
     def _scan_project(self, path):
         if not os.path.isdir(path):
