@@ -43,6 +43,7 @@ kodiqa
 - **Shell env detection** — auto-detects OS, shell, dev tools
 - **Diff preview** — colored diff before every file write/edit
 - **Parallel tools** — read-only operations run concurrently
+- **Session summary** — auto-saves context summary on quit, loaded on next start
 - **Conversation recovery** — auto-saved sessions, resume on crash
 - **Workspace boundary** — asks permission before accessing files outside working directory
 - **Smart Ollama lifecycle** — starts on launch, stops when switching to cloud, restarts on local switch
@@ -310,7 +311,7 @@ find any bugs in this code
 
 ```
 ~/LLMS/kodiqa/
-  kodiqa.py          # Main agent (~3195 lines)
+  kodiqa.py          # Main agent (~3280 lines)
   actions.py         # 26 action handlers (~950 lines)
   tools.py           # Tool schemas (~460 lines)
   config.py          # Config, aliases, system prompt (~335 lines)
@@ -355,6 +356,8 @@ find any bugs in this code
 - Memories persist forever across sessions
 - Arrow keys work: up/down for history, left/right to edit
 - Sessions auto-save — restart if anything goes wrong
+- Session summary auto-saved on quit — next start has full context
+- Type `quit` or `exit` (no slash needed) to exit
 - Ollama starts/stops automatically — stops on cloud switch, restarts on local switch
 
 ## Testing
