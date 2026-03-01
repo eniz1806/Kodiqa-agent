@@ -29,7 +29,10 @@ CLAUDE_API_URL = "https://api.anthropic.com/v1/messages"
 # Qwen API models (Alibaba Cloud DashScope - OpenAI-compatible)
 QWEN_ALIASES = {
     "qwen-api": "qwen-plus",
-    "qwen-max": "qwen-max",
+    "qwen-max": "qwen3-max",
+    "qwen3.5": "qwen3.5-plus-2026-02-15",
+    "qwen3.5-plus": "qwen3.5-plus-2026-02-15",
+    "qwen3.5-os": "qwen3.5-27b",
     "qwen-coder-api": "qwen3-coder-plus",
     "qwen-flash-api": "qwen-flash",
 }
