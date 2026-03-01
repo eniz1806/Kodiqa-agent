@@ -484,9 +484,7 @@ class Kodiqa:
         self._detect_git()
         self._load_session()
         self._welcome()
-        # Only start Ollama and check updates if using a local model
-        if not is_claude_model(self.model) and not is_qwen_api_model(self.model):
-            self._check_updates()
+        self._check_updates()
         try:
             while True:
                 try:
@@ -1003,7 +1001,7 @@ class Kodiqa:
             self.model = new_model
             self.multi_models = []  # switch to single mode
             if is_claude_model(self.model) or is_qwen_api_model(self.model):
-                self._stop_ollama()  # don't need Ollama for cloud models
+                self._stop_ollama()
             if is_claude_model(self.model):
                 provider = "[yellow]Claude API[/]"
             elif is_qwen_api_model(self.model):
@@ -1445,7 +1443,7 @@ class Kodiqa:
                 self.model = new_model
                 self.multi_models = []
                 if is_claude_model(self.model) or is_qwen_api_model(self.model):
-                    self._stop_ollama()  # don't need Ollama for cloud models
+                    self._stop_ollama()
                 if is_claude_model(self.model):
                     provider = "[yellow]Claude API[/]"
                 elif is_qwen_api_model(self.model):
