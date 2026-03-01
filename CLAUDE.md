@@ -103,7 +103,7 @@ tests/           156 tests, all passing (~0.25s)
 - `bin/kodiqa` — shell script that runs venv Python directly
 - `pyproject.toml` — pip-installable package with `kodiqa` entry point
 - Install: `pip install .` or `pip install -e .` (editable)
-- Current version: v1.2.0
+- Current version: v1.3.0
 
 ## Key Patterns
 
@@ -248,7 +248,7 @@ source ~/LLMS/kodiqa/venv/bin/activate && pytest -v
 - Python 3.9+, rich, beautifulsoup4, requests, prompt_toolkit, pytest (dev)
 - Ollama installed at `/Applications/Ollama.app`
 - Virtual environment at `./venv/`
-- Current version: v1.2.0
+- Current version: v1.3.0
 
 ### Adding a New Tool
 1. Add the handler function `do_<name>()` in `actions.py`
