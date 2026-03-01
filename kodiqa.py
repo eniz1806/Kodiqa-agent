@@ -1078,6 +1078,10 @@ class Kodiqa:
                 if not resolved:
                     self.console.print("[yellow]No Ollama models found.[/]")
                     return
+                if len(resolved) < 2:
+                    self.console.print("[yellow]Multi-model needs at least 2 models. Only 1 installed.[/]")
+                    self.console.print(f"  • Pull more models or use [bold]/model {resolved[0]}[/] for single mode")
+                    return
             else:
                 names = arg.split()
                 resolved = []
@@ -1096,6 +1100,9 @@ class Kodiqa:
                         resolved.append(MODEL_ALIASES[name])
                     else:
                         resolved.append(name)
+            if len(resolved) < 2:
+                self.console.print("[yellow]Multi-model needs at least 2 models.[/]")
+                return
             self.multi_models = resolved
             names_str = ", ".join(f"[cyan]{m}[/]" for m in resolved)
             self.console.print(f"Multi-model mode: {names_str}")
