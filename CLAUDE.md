@@ -6,7 +6,7 @@ A Claude Code clone that runs 100% locally using free Ollama models, with option
 ## Architecture
 
 ```
-kodiqa.py  (~2995 lines)  Main agent: Kodiqa class, StreamWriter, chat loops, slash commands, modes, MCP, branching, auto-discovery
+kodiqa.py  (~3060 lines)  Main agent: Kodiqa class, StreamWriter, arrow-key UI, chat loops, slash commands, modes, MCP, branching, auto-discovery
 actions.py (~940 lines)   26 action handlers: file ops, git, search, web, memory, clipboard, multi_edit, edit queue + diff preview
 tools.py   (~460 lines)   Tool schemas (Claude native format, converted to OpenAI format for Qwen)
 config.py  (~335 lines)   Constants, model aliases (all Claude 4.6/4.5/4 + Qwen 3.5/3), system prompt, config
@@ -78,6 +78,19 @@ tests/           156 tests, all passing (~0.25s)
 - Cached for 10 minutes to avoid repeated API calls
 - New models appear automatically in `/model` picker and `/models` list
 - Live models shown as "(live)" — usable by full model ID
+
+### Arrow-Key UI (kodiqa.py: `_arrow_select`)
+- Claude Code-style `❯` prompt with status bar showing modes
+- `_arrow_select(options, console, default)` — reusable arrow-key selector using raw terminal input
+- Supports ↑↓ arrow keys, j/k vim keys, number shortcuts, Enter to confirm
+- Used in: permission confirm, edit review, plan approval
+- Uses `tty.setraw()` / `termios` for raw input, restores terminal state after
+
+### Global Install
+- `bin/kodiqa` — shell script that runs venv Python directly
+- `pyproject.toml` — pip-installable package with `kodiqa` entry point
+- Install: `pip install .` or `pip install -e .` (editable)
+- Current version: v1.1.0
 
 ## Key Patterns
 
@@ -251,3 +264,6 @@ Add the handler in `_handle_slash()` method in `kodiqa.py`. Update `/help` text.
 - Per-file undo buffer: `deque(maxlen=10)` storing content before each edit/write
 - Shell env detection at startup (OS, shell, Python, git, node, cargo, go, java, docker)
 - Readline fallback for systems without readline support
+- Arrow-key selector for all interactive prompts (tty/termios raw input)
+- `❯` prompt with status bar (modes, accept edits state)
+- pip-installable via `pyproject.toml` with `kodiqa` console script entry point
