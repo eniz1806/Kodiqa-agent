@@ -157,7 +157,20 @@ def is_claude_model(model_name):
 
 def is_qwen_api_model(model_name):
     """Check if a model name is a Qwen API model (not local Ollama Qwen)."""
-    return model_name in QWEN_ALIASES or model_name in QWEN_ALIASES.values()
+    if model_name in QWEN_ALIASES or model_name in QWEN_ALIASES.values():
+        return True
+    # Local Ollama models have colons (e.g. qwen3-coder:latest) or are in MODEL_ALIASES
+    if ":" in model_name or model_name in MODEL_ALIASES or model_name in MODEL_ALIASES.values():
+        return False
+    # API model names: contain version dates or API-specific suffixes
+    api_markers = ("-plus", "-flash", "-turbo", "-latest", "-max", "-long", "-math")
+    if any(m in model_name for m in api_markers):
+        return True
+    # Date-stamped models (e.g. qwen3-max-2025-09-23)
+    import re
+    if re.search(r"\d{4}-\d{2}-\d{2}", model_name):
+        return True
+    return False
 
 
 SYSTEM_PROMPT = """You are Kodiqa, a powerful AI coding assistant. You help users with software engineering, research, and general tasks.

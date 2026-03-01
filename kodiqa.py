@@ -923,18 +923,27 @@ class Kodiqa:
                     choices.append((alias, full, "local"))
                     marker = " [cyan]◀[/]" if full == self.model else ""
                     self.console.print(f"  {len(choices)}. {alias} [dim]→ {full}[/]{marker}")
+                extra_claude, extra_qwen = self._get_api_model_choices()
                 if self.claude_key:
                     self.console.print("[bold yellow]Claude API:[/]")
                     for alias, full in CLAUDE_ALIASES.items():
                         choices.append((alias, full, "claude"))
                         marker = " [cyan]◀[/]" if full == self.model else ""
                         self.console.print(f"  {len(choices)}. {alias} [dim]→ {full}[/]{marker}")
+                    for m in extra_claude:
+                        choices.append((m, m, "claude"))
+                        marker = " [cyan]◀[/]" if m == self.model else ""
+                        self.console.print(f"  {len(choices)}. [dim]{m}[/] [dim](live)[/]{marker}")
                 if self.qwen_key:
                     self.console.print("[bold blue]Qwen API:[/]")
                     for alias, full in QWEN_ALIASES.items():
                         choices.append((alias, full, "qwen"))
                         marker = " [cyan]◀[/]" if full == self.model else ""
                         self.console.print(f"  {len(choices)}. {alias} [dim]→ {full}[/]{marker}")
+                    for m in extra_qwen:
+                        choices.append((m, m, "qwen"))
+                        marker = " [cyan]◀[/]" if m == self.model else ""
+                        self.console.print(f"  {len(choices)}. [dim]{m}[/] [dim](live)[/]{marker}")
                 self.console.print()
                 try:
                     pick = Prompt.ask("[bold]Pick a model[/] (number or name, or 'skip')")
@@ -1292,6 +1301,65 @@ class Kodiqa:
         except (EOFError, KeyboardInterrupt):
             self.console.print("\n[dim]Cancelled.[/]")
 
+    def _fetch_api_models(self):
+        """Fetch live model lists from Claude and Qwen APIs. Caches results."""
+        if not hasattr(self, "_cached_api_models"):
+            self._cached_api_models = {"claude": [], "qwen": [], "_ts": 0}
+        import time
+        # Cache for 10 minutes
+        if time.time() - self._cached_api_models.get("_ts", 0) < 600:
+            return self._cached_api_models
+        # Fetch Claude models
+        claude_models = []
+        if self.claude_key:
+            try:
+                resp = requests.get(
+                    "https://api.anthropic.com/v1/models",
+                    headers={"x-api-key": self.claude_key, "anthropic-version": "2023-06-01"},
+                    timeout=10,
+                )
+                if resp.status_code == 200:
+                    data = resp.json().get("data", [])
+                    # Filter to chat models only
+                    for m in data:
+                        mid = m.get("id", "")
+                        if mid.startswith("claude-") and "embed" not in mid:
+                            claude_models.append(mid)
+                    claude_models.sort()
+            except Exception:
+                pass
+        # Fetch Qwen models
+        qwen_models = []
+        if self.qwen_key:
+            try:
+                resp = requests.get(
+                    QWEN_API_URL.replace("/chat/completions", "/models"),
+                    headers={"Authorization": f"Bearer {self.qwen_key}"},
+                    timeout=10,
+                )
+                if resp.status_code == 200:
+                    data = resp.json().get("data", [])
+                    for m in data:
+                        mid = m.get("id", "")
+                        if mid.startswith("qwen") or mid.startswith("qwq"):
+                            qwen_models.append(mid)
+                    qwen_models.sort()
+            except Exception:
+                pass
+        self._cached_api_models = {
+            "claude": claude_models,
+            "qwen": qwen_models,
+            "_ts": time.time(),
+        }
+        return self._cached_api_models
+
+    def _get_api_model_choices(self):
+        """Get models from APIs that aren't already in aliases."""
+        live = self._fetch_api_models()
+        extra_claude = [m for m in live["claude"] if m not in CLAUDE_ALIASES.values()]
+        extra_qwen = [m for m in live["qwen"] if m not in QWEN_ALIASES.values()]
+        return extra_claude, extra_qwen
+
     def _list_models(self):
         lines = []
         if self.claude_key:
@@ -1299,12 +1367,25 @@ class Kodiqa:
             for alias, model in CLAUDE_ALIASES.items():
                 marker = " [green]◀ current[/]" if model == self.model else ""
                 lines.append(f"  [cyan]{model}[/] (/{alias}){marker}")
+            # Show any extra live models not in aliases
+            extra_claude, _ = self._get_api_model_choices()
+            if extra_claude:
+                lines.append("  [dim]── additional (from API) ──[/]")
+                for m in extra_claude:
+                    marker = " [green]◀ current[/]" if m == self.model else ""
+                    lines.append(f"  [cyan]{m}[/] [dim](use full name)[/]{marker}")
             lines.append("")
         if self.qwen_key:
             lines.append("[bold blue]Qwen API Models:[/]")
             for alias, model in QWEN_ALIASES.items():
                 marker = " [green]◀ current[/]" if model == self.model else ""
                 lines.append(f"  [cyan]{model}[/] (/{alias}){marker}")
+            _, extra_qwen = self._get_api_model_choices()
+            if extra_qwen:
+                lines.append("  [dim]── additional (from API) ──[/]")
+                for m in extra_qwen:
+                    marker = " [green]◀ current[/]" if m == self.model else ""
+                    lines.append(f"  [cyan]{m}[/] [dim](use full name)[/]{marker}")
             lines.append("")
         lines.append("[bold green]Local Ollama Models:[/]")
         try:
