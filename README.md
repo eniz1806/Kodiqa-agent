@@ -2,31 +2,34 @@
 
 Your personal Claude Code clone running 100% locally with free models — or powered by Claude/Qwen API for maximum intelligence.
 
-## Start
+## Install
 
+```bash
+git clone https://github.com/eniz1806/Kodiqa-agent.git
+cd Kodiqa-agent
+pip install .
+```
+
+Then run from any directory:
 ```
 kodiqa
 ```
 
-Or if alias isn't loaded yet:
-```
-source ~/LLMS/kodiqa/venv/bin/activate && python ~/LLMS/kodiqa/kodiqa.py
-```
-
 ## Features
 
+- **Claude Code-style UI** — `❯` prompt, status bar, arrow-key navigation for all prompts
 - **26 tools** — file ops, git, search, web, memory, clipboard, multi-edit, undo, diff apply
 - **3 API providers** — Ollama (local/free), Claude API, Qwen API (DashScope)
 - **MCP server support** — connect external tool servers via Model Context Protocol
 - **Auto model discovery** — new Claude/Qwen models appear automatically from APIs
-- **Interactive model picker** — `/model` shows numbered list, pick by number
+- **Interactive pickers** — `/model` and `/key` show numbered menus, navigate with arrows
 - **Tab autocomplete** — slash commands, model names, file paths
 - **Compact streaming** — hides code output, shows progress instead (toggle with `/verbose`)
 - **Thinking display** — shows spinner for `<think>` reasoning blocks, line count summary
 - **Multi-model consensus** — query all models, merge best answers
 - **3 permission modes** — default (confirm all), relaxed (auto file ops), auto (no confirms)
 - **Plan mode** — AI explores + plans, you approve, then it implements
-- **Batch edit review** — queue edits, accept/reject per file interactively
+- **Batch edit review** — queue edits, accept/reject per file with arrow keys
 - **Context window management** — warns at 70%, auto-compacts at 85%, visual progress bar
 - **Conversation branching** — save/switch between conversation states
 - **Token tracking** — cost per response, session totals, tok/s speed
@@ -38,12 +41,30 @@ source ~/LLMS/kodiqa/venv/bin/activate && python ~/LLMS/kodiqa/kodiqa.py
 - **Git-aware context** — auto-detects git repo, includes diff stats
 - **Project indexing** — symbol extraction (def/class/function), cached
 - **Shell env detection** — auto-detects OS, shell, dev tools
-- **User-editable config** — `~/.kodiqa/config.json` overrides defaults
 - **Diff preview** — colored diff before every file write/edit
 - **Parallel tools** — read-only operations run concurrently
 - **Conversation recovery** — auto-saved sessions, resume on crash
 - **Ollama auto-management** — starts on launch, stops on quit
 - **156 tests** — pytest test suite, all passing
+
+## Arrow-Key UI
+
+All interactive prompts use arrow keys — no typing letters:
+
+```
+  Allow: Write file: ~/project/app.py
+    ❯ Yes
+      Yes, don't ask again — for this action type
+      No
+```
+
+Navigate with **↑↓ arrows** or **j/k**, press **Enter** to select, or **1/2/3** to jump.
+
+Status bar shows current modes:
+```
+  ❯❯ accept edits on  (shift+tab to cycle)
+❯
+```
 
 ## Slash Commands
 
@@ -81,7 +102,7 @@ source ~/LLMS/kodiqa/venv/bin/activate && python ~/LLMS/kodiqa/kodiqa.py
 
 | Mode | Behavior |
 |------|----------|
-| `default` | 3-choice confirmation for all writes/commands (Yes / Yes don't ask again / No) |
+| `default` | Arrow-key confirm for all writes/commands (Yes / Don't ask again / No) |
 | `relaxed` | Auto-approve file operations, only confirm commands + deletes |
 | `auto` | No confirmations — everything auto-approved |
 
@@ -92,22 +113,23 @@ Switch with `/mode relaxed` or `/mode auto`. Default is `default`.
 Activate with `/plan`. The AI will:
 1. **Explore** — read files, search, analyze (no writes allowed)
 2. **Present plan** — show what it intends to do
-3. **You decide** — approve, revise, or reject
+3. **You decide** — approve, revise, or reject (arrow keys)
 4. **Implement** — on approval, AI executes the plan
 
 ## Batch Edit Review
 
-When enabled (default ON, toggle with `/accept`), file edits are queued and presented for review after the AI finishes:
+When enabled (default ON, toggle with `/accept`), file edits are queued and presented for review:
 
 ```
-╭── Edit Review (3 edits) ──╮
-│ [1/3] Write: src/app.js   │
-│ (a)ccept (r)eject (d)iff  │
-│ (A)ccept All (R)eject All │
-╰───────────────────────────╯
+  ? (1/3) app.py — write  +15 -3 lines
+    ❯ Accept
+      Reject
+      Show diff
+      Accept all — remaining 3 edits
+      Reject all
 ```
 
-Navigate with `n`/`p`, view diffs with `d`, accept/reject individually or in bulk.
+Navigate with arrow keys, view diffs, accept/reject individually or in bulk.
 
 ## MCP Server Support
 
@@ -285,16 +307,17 @@ find any bugs in this code
 
 ```
 ~/LLMS/kodiqa/
-  kodiqa.py          # Main agent (~2995 lines)
+  kodiqa.py          # Main agent (~3060 lines)
   actions.py         # 26 action handlers (~940 lines)
   tools.py           # Tool schemas (~460 lines)
   config.py          # Config, aliases, system prompt (~335 lines)
   web.py             # Web search + page fetch (~195 lines)
   memory.py          # SQLite persistent memory (82 lines)
   mcp.py             # MCP client (~175 lines)
+  bin/kodiqa         # Global install script
   tests/             # 156 tests (pytest)
+  pyproject.toml     # Package config (pip install .)
   requirements.txt   # Dependencies
-  venv/              # Python virtual environment
 
 ~/.kodiqa/
   config.json        # User-editable config (overrides defaults)
@@ -311,6 +334,7 @@ find any bugs in this code
 
 ## Tips
 
+- All prompts use **arrow keys** — no typing letters, just navigate and press Enter
 - Default is **compact mode** — code hidden during streaming, progress shown instead
 - Use `/verbose` when you want to see code as it streams
 - Use `/mode relaxed` to skip file edit confirmations
@@ -333,7 +357,6 @@ find any bugs in this code
 ## Testing
 
 ```bash
-source ~/LLMS/kodiqa/venv/bin/activate
 pytest -v          # 156 tests, all passing
 ```
 
