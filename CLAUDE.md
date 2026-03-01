@@ -1,7 +1,7 @@
 # Kodiqa - Local AI Coding Agent
 
 ## What This Is
-A Claude Code clone that runs 100% locally using free Ollama models, with optional cloud APIs (Claude, OpenAI, DeepSeek, Groq, Mistral, Qwen) for smarter responses. Python CLI agent with multi-model consensus, 26 tools, MCP server support, auto model discovery, 3 permission modes, plan mode, batch edit review, tab autocomplete, context window management, conversation branching, thinking display, web search, persistent memory, compact streaming, custom plugins, sub-agents, LSP integration, 5 themes, and full filesystem access.
+An open-source AI coding agent that runs anywhere — free locally with Ollama, or supercharged by 7 cloud APIs (Claude, OpenAI, DeepSeek, Groq, Mistral, Qwen). Python CLI agent with multi-model consensus, 26 tools, MCP server support, auto model discovery, 3 permission modes, plan mode, batch edit review, tab autocomplete, context window management, conversation branching, thinking display, web search, persistent memory, compact streaming, custom plugins, sub-agents, LSP integration, 5 themes, and full filesystem access.
 
 ## Architecture
 

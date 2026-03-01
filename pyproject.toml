@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "kodiqa"
 version = "2.0.0"
-description = "Local AI coding agent — Claude Code clone with 7 providers, plugins, sub-agents, LSP, themes, and 51 slash commands"
+description = "AI coding agent that runs anywhere — 7 providers, 26 tools, plugins, sub-agents, LSP, themes, 49 commands"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.9"

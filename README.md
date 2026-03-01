@@ -3,7 +3,11 @@
 </p>
 
 <p align="center">
-  <strong>Your personal Claude Code clone running 100% locally with free models — or powered by 6 cloud APIs. Now with plugins, sub-agents, LSP, themes, and 49 slash commands.</strong>
+  <strong>The AI coding agent that runs anywhere — free locally with Ollama, or supercharged by 7 cloud APIs. One agent, every model, zero limits.</strong>
+</p>
+
+<p align="center">
+  <em>49 slash commands &bull; 26 tools &bull; custom plugins &bull; sub-agents &bull; LSP &bull; 5 themes &bull; voice input</em>
 </p>
 
 <p align="center">
