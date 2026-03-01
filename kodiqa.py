@@ -379,6 +379,7 @@ class Kodiqa:
         self.multi_models = self._discover_models()  # default: multi-model mode
         self._auto_approved = set()  # action types auto-approved this session
         self.session_tokens = {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0, "cost": 0.0}
+        self._ollama_started_by_us = False  # track if we started Ollama
         # Setup prompt_toolkit for Claude Code-style UI
         self._history_file = os.path.join(KODIQA_DIR, "input_history")
         self._pt_style = PTStyle.from_dict({
@@ -483,7 +484,9 @@ class Kodiqa:
         self._detect_git()
         self._load_session()
         self._welcome()
-        self._check_updates()
+        # Only start Ollama and check updates if using a local model
+        if not is_claude_model(self.model) and not is_qwen_api_model(self.model):
+            self._check_updates()
         try:
             while True:
                 try:
@@ -703,13 +706,14 @@ class Kodiqa:
         self._save_session()
         self.memory.close()
         self.mcp.stop_all()
-        # Always stop Ollama on quit — no need to leave it running
-        import subprocess
-        try:
-            subprocess.run(["pkill", "-f", "ollama"], capture_output=True, timeout=5)
-            self.console.print("\n[green]●[/] Ollama stopped")
-        except Exception:
-            pass
+        # Only stop Ollama if we started it
+        if self._ollama_started_by_us:
+            import subprocess
+            try:
+                subprocess.run(["pkill", "-f", "ollama"], capture_output=True, timeout=5)
+                self.console.print("\n[green]●[/] Ollama stopped")
+            except Exception:
+                pass
         self.console.print("[dim]Goodbye! Session saved.[/]")
 
     def _ensure_ollama(self):
@@ -735,6 +739,7 @@ class Kodiqa:
                 try:
                     requests.get(f"{OLLAMA_URL}/api/tags", timeout=2)
                     self.console.print("[green]●[/] Ollama started")
+                    self._ollama_started_by_us = True
                     return True
                 except Exception:
                     continue
@@ -1942,6 +1947,10 @@ class Kodiqa:
     # ── Ollama chat (text-based actions) ──
 
     def _chat_ollama(self, user_msg):
+        # Ensure Ollama is running (may have switched from cloud model)
+        if not self._ensure_ollama():
+            self.console.print("[red]Cannot chat — Ollama is not running.[/]")
+            return
         self.history.append({"role": "user", "content": user_msg})
         for iteration in range(MAX_ITERATIONS):
             memories_ctx = self.memory.get_context()
