@@ -355,15 +355,15 @@ find any bugs in this code
 
 ```
 ~/LLMS/kodiqa/
-  kodiqa.py          # Main agent (~3430 lines)
+  kodiqa.py          # Main agent (~3508 lines)
   actions.py         # 26 action handlers (~950 lines)
-  tools.py           # Tool schemas (~460 lines)
-  config.py          # Config, aliases, system prompt (~355 lines)
-  web.py             # Web search + page fetch (~195 lines)
+  tools.py           # Tool schemas (~461 lines)
+  config.py          # Config, provider registry, aliases (~425 lines)
+  web.py             # Web search + page fetch (~194 lines)
   memory.py          # SQLite persistent memory (82 lines)
-  mcp.py             # MCP client (~175 lines)
+  mcp.py             # MCP client (~176 lines)
   bin/kodiqa         # Global install script
-  tests/             # 156 tests (pytest)
+  tests/             # 165 tests (pytest)
   pyproject.toml     # Package config (pip install .)
   requirements.txt   # Dependencies
 
@@ -437,7 +437,7 @@ find any bugs in this code
 | **Tests** | 165 | Yes | Yes | Yes | Yes |
 | **Open source** | Yes (AGPL-3.0) | Yes (Apache-2.0) | Yes (Apache-2.0) | Yes (Apache-2.0) | Yes (MIT) |
 
-**Kodiqa's unique advantages**: free local models, 3 API providers, multi-model consensus, batch edit review, conversation branching, budget limits, auto-lint, and auto model discovery — features no other agent offers together.
+**Kodiqa's unique advantages**: free local models, 7 API providers, multi-model consensus, batch edit review, conversation branching, budget limits, auto-lint, and auto model discovery — features no other agent offers together.
 
 ## Testing
 

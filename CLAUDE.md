@@ -1,27 +1,27 @@
 # Kodiqa - Local AI Coding Agent
 
 ## What This Is
-A Claude Code clone that runs 100% locally using free Ollama models, with optional Claude API and Qwen API for smarter responses. Python CLI agent with multi-model consensus, 26 tools, MCP server support, auto model discovery, 3 permission modes, plan mode, batch edit review, tab autocomplete, context window management, conversation branching, thinking display, web search, persistent memory, compact streaming, and full filesystem access.
+A Claude Code clone that runs 100% locally using free Ollama models, with optional cloud APIs (Claude, OpenAI, DeepSeek, Groq, Mistral, Qwen) for smarter responses. Python CLI agent with multi-model consensus, 26 tools, MCP server support, auto model discovery, 3 permission modes, plan mode, batch edit review, tab autocomplete, context window management, conversation branching, thinking display, web search, persistent memory, compact streaming, and full filesystem access.
 
 ## Architecture
 
 ```
-kodiqa.py  (~3430 lines)  Main agent: Kodiqa class, StreamWriter, KodiqaCompleter, prompt_toolkit UI, chat loops, slash commands, modes, MCP, branching, auto-discovery, workspace boundary, auto-commit, budget, lint
+kodiqa.py  (~3508 lines)  Main agent: Kodiqa class, StreamWriter, KodiqaCompleter, prompt_toolkit UI, chat loops, slash commands, modes, MCP, branching, auto-discovery, workspace boundary, auto-commit, budget, lint
 actions.py (~950 lines)   26 action handlers: file ops, git, search, web, memory, clipboard, multi_edit, edit queue + diff preview
-tools.py   (~460 lines)   Tool schemas (Claude native format, converted to OpenAI format for Qwen)
-config.py  (~355 lines)   Constants, model aliases (all Claude 4.6/4.5/4 + Qwen 3.5/3), system prompt, config, .kodiqaignore
-web.py     (~195 lines)   3 search engines (DuckDuckGo, Google scrape, Google API) + page fetcher
+tools.py   (~461 lines)   Tool schemas (Claude native format, converted to OpenAI format for OpenAI-compat providers)
+config.py  (~425 lines)   Constants, provider registry (OPENAI_COMPAT_PROVIDERS), model aliases, system prompt, config, .kodiqaignore
+web.py     (~194 lines)   3 search engines (DuckDuckGo, Google scrape, Google API) + page fetcher
 memory.py  (82 lines)     SQLite-backed persistent memory store
-mcp.py     (~175 lines)   MCP client: MCPServer (stdio JSON-RPC transport) + MCPManager (multi-server)
+mcp.py     (~176 lines)   MCP client: MCPServer (stdio JSON-RPC transport) + MCPManager (multi-server)
 ```
 
 ## Test Suite
 
 ```
-tests/           156 tests, all passing (~0.25s)
+tests/           165 tests, all passing (~0.25s)
   conftest.py          Shared fixtures (sample_file, sample_tree, memory_store)
   test_parse_actions   Action parsing (~18 tests)
-  test_config          Config functions (~13 tests)
+  test_config          Config functions + provider registry (~22 tests)
   test_file_ops        File operations (~15 tests)
   test_search_ops      Search operations (~13 tests)
   test_edit_queue      Edit queue + undo (~10 tests)
@@ -33,19 +33,53 @@ tests/           156 tests, all passing (~0.25s)
   test_new_features    Thinking, branching, slash commands (~16 tests)
 ```
 
-## Triple-Mode Design
+## Dual-Mode Design
 - **Ollama models**: Text-based `[ACTION: name]...[/ACTION]` blocks parsed by `actions.py:parse_actions()`
 - **Claude API**: Native tool_use with Anthropic's streaming SSE format + prompt caching
-- **Qwen API**: OpenAI-compatible tool calling (DashScope endpoint, same tool schemas converted via `_get_qwen_tools()`)
-- All three modes share the same `_dispatch()` handler in `actions.py`
+- **OpenAI-compat providers** (OpenAI, DeepSeek, Groq, Mistral, Qwen): Generic `_chat_openai_compat(provider)` with OpenAI-format tool calling, parameterized by provider registry
+- All modes share the same `_dispatch()` handler in `actions.py`
 
 ## API Providers
 
-| Provider | Config Key | Aliases Dict | Detection | Endpoint |
-|----------|-----------|-------------|-----------|----------|
-| Ollama | — | `MODEL_ALIASES` | default | `localhost:11434` |
-| Claude | `claude_api_key` | `CLAUDE_ALIASES` | `is_claude_model()` | `api.anthropic.com` |
-| Qwen | `qwen_api_key` | `QWEN_ALIASES` | `is_qwen_api_model()` | `dashscope-intl.aliyuncs.com` |
+| Provider | Config Key | Detection | Endpoint | Color |
+|----------|-----------|-----------|----------|-------|
+| Ollama | — | default | `localhost:11434` | green |
+| Claude | `claude_api_key` | `is_claude_model()` | `api.anthropic.com` | yellow |
+| OpenAI | `openai_api_key` | `get_openai_provider()` | `api.openai.com` | white |
+| DeepSeek | `deepseek_api_key` | `get_openai_provider()` | `api.deepseek.com` | cyan |
+| Groq | `groq_api_key` | `get_openai_provider()` | `api.groq.com` | red |
+| Mistral | `mistral_api_key` | `get_openai_provider()` | `api.mistral.ai` | magenta |
+| Qwen | `qwen_api_key` | `get_openai_provider()` | `dashscope-intl.aliyuncs.com` | blue |
+
+### Provider Registry (config.py: `OPENAI_COMPAT_PROVIDERS`)
+All 5 OpenAI-compatible providers share one implementation via a registry dict:
+```python
+OPENAI_COMPAT_PROVIDERS = {
+    "openai": {"url": ..., "models_url": ..., "key_setting": ..., "color": ..., "label": ..., "aliases": {...}},
+    "deepseek": {...},
+    "groq": {...},
+    "mistral": {...},
+    "qwen": {...},
+}
+```
+- `get_openai_provider(model_name)` — returns provider name or None
+- `is_openai_compat_model(model_name)` — returns bool
+- `is_qwen_api_model()` — backward-compat thin wrapper
+
+### Provider Routing (kodiqa.py)
+```python
+def _dispatch_chat(self, user_msg):
+    if is_claude_model(self.model) or self._is_live_claude(self.model):
+        self._chat_claude(user_msg)
+    else:
+        provider = self._get_provider_for_model(self.model)
+        if provider:
+            self._chat_openai_compat(user_msg, provider)
+        else:
+            self._chat_ollama(user_msg)
+```
+- `_get_provider_for_model()` checks aliases + live cached API models
+- `self.api_keys = {}` dict stores all provider keys from settings
 
 ## API Models
 
@@ -61,6 +95,34 @@ tests/           156 tests, all passing (~0.25s)
 | `sonnet-4` | claude-sonnet-4-20250514 | $3/$15 |
 | `opus-4` | claude-opus-4-20250514 | $15/$75 |
 
+### OpenAI API (6 aliases)
+| Alias | Model ID |
+|-------|----------|
+| `gpt` / `gpt4` | gpt-4o |
+| `gpt-mini` | gpt-4o-mini |
+| `o3` / `o3-mini` / `o4-mini` | reasoning models |
+
+### DeepSeek API (2 aliases)
+| Alias | Model ID |
+|-------|----------|
+| `deepseek` | deepseek-chat |
+| `deepseek-r1` | deepseek-reasoner |
+
+### Groq API (4 aliases)
+| Alias | Model ID |
+|-------|----------|
+| `llama` | llama-3.3-70b-versatile |
+| `llama-small` | llama-3.1-8b-instant |
+| `gemma` | gemma2-9b-it |
+| `mixtral` | mixtral-8x7b-32768 |
+
+### Mistral API (3 aliases)
+| Alias | Model ID |
+|-------|----------|
+| `mistral` | mistral-large-latest |
+| `mistral-small` | mistral-small-latest |
+| `codestral` | codestral-latest |
+
 ### Qwen API (13 aliases)
 | Alias | Model ID | Best For |
 |-------|----------|----------|
@@ -74,7 +136,7 @@ tests/           156 tests, all passing (~0.25s)
 | `qwen-turbo` | qwen-turbo | Cheapest/fastest |
 
 ### Auto Model Discovery
-- `_fetch_api_models()` fetches live model lists from Claude and Qwen API endpoints
+- `_fetch_api_models()` fetches live model lists from all API providers with keys set
 - `_fetch_ollama_library()` scrapes ollama.com/library for available models (name, desc, pulls)
 - Cached for 10 minutes to avoid repeated API calls
 - New models appear automatically in `/model` picker and `/models` list
@@ -85,7 +147,7 @@ tests/           156 tests, all passing (~0.25s)
 - `_stop_ollama()` — stops only if we started it
 - `_check_updates()` — checks installed models for updates, fetches available models from ollama.com
 - Always starts Ollama on launch + checks updates
-- Stops Ollama when switching to cloud model (Claude/Qwen API)
+- Stops Ollama when switching to cloud model
 - Restarts + checks updates when switching back to local model
 - Stops on quit if we started it
 - Welcome detects missing local models, guides user to pull or add API key
@@ -96,12 +158,12 @@ tests/           156 tests, all passing (~0.25s)
 - Saves as `## Last Session` in project context file (`~/.kodiqa/projects/<project>.md`)
 - Replaces previous summary each session, preserves manual notes
 - Auto-loaded into system prompt on next start for continuity
-- Works with all 3 providers (Claude/Qwen/Ollama)
+- Works with all providers
 
 ### Prompt UI (kodiqa.py: prompt_toolkit + `_arrow_select`)
 - Claude Code-style `❯` prompt with separator line, powered by `prompt_toolkit`
 - `PromptSession` with `FileHistory`, `KodiqaCompleter`, styled prompt
-- `KodiqaCompleter(Completer)` — tab completion for slash commands, model aliases, modes, file paths
+- `KodiqaCompleter(Completer)` — tab completion for slash commands, model aliases (all providers), modes, file paths
 - `_arrow_select(options, console, default)` — reusable arrow-key selector using `tty.setcbreak` + `os.write` to fd (cursor-up redraw)
 - Supports ↑↓ arrow keys, j/k vim keys, number shortcuts, Enter to confirm
 - Uses save/restore cursor (`\033[s`/`\033[u`) for in-place redraw
@@ -111,7 +173,7 @@ tests/           156 tests, all passing (~0.25s)
 - `bin/kodiqa` — shell script that runs venv Python directly
 - `pyproject.toml` — pip-installable package with `kodiqa` entry point
 - Install: `pip install .` or `pip install -e .` (editable)
-- Current version: v1.6.0
+- Current version: v1.7.0
 
 ## Key Patterns
 
@@ -155,15 +217,15 @@ tests/           156 tests, all passing (~0.25s)
 - `/mcp add <name> <command>` — connect a server
 - `/mcp remove <name>` — disconnect
 - `/mcp list` — show connected servers + tools
-- MCP tools automatically available to Claude and Qwen API (merged via `_get_all_tools()`)
+- MCP tools automatically available to Claude and OpenAI-compat providers (merged via `_get_all_tools()`)
 - MCP tool calls routed in both chat loops (split from regular tools)
 
 ### Tab Autocomplete (kodiqa.py: KodiqaCompleter)
-- prompt_toolkit `Completer` subclass for slash commands, model aliases, modes, search engines, file paths
+- prompt_toolkit `Completer` subclass for slash commands, model aliases (all 7 providers), modes, search engines, file paths
 - Context-aware: `/model` completes model names, `/cd` completes paths, `/mode` completes mode names
 
 ### Context Window Management (kodiqa.py)
-- `_context_limit()`: 200K for Claude, 1M for Qwen, config-based for Ollama
+- `_context_limit()`: 200K for Claude, 128K for OpenAI/Mistral, 64K for DeepSeek, 32K for Groq, 1M for Qwen, config-based for Ollama
 - `_auto_compact_if_needed()`: warns at 70%, auto-compacts at 85%
 - `/tokens` shows visual progress bar with percentage
 
@@ -174,7 +236,7 @@ tests/           156 tests, all passing (~0.25s)
 - `/branch list` — show all branches
 
 ### Thinking Display (kodiqa.py: StreamWriter)
-- Detects `<think>...</think>` blocks from Qwen/reasoning models
+- Detects `<think>...</think>` blocks from reasoning models
 - Shows spinner during thinking, summary line count after
 - Hidden in compact mode, passed through in verbose mode
 
@@ -183,13 +245,13 @@ tests/           156 tests, all passing (~0.25s)
 - Hides code blocks + ACTION blocks + think blocks with progress indicators
 
 ### Interactive Model Picker
-- `/model` with no arg shows numbered list of all models (local + Claude + Qwen + live API)
+- `/model` with no arg shows numbered list of all models (local + all API providers + live API)
 - Pick by number or name
 - Current model marked with arrow
 
 ### Interactive Key Picker
-- `/key` with no arg asks which provider (Claude or Qwen)
-- Shows status (set/not set) for each provider
+- `/key` with no arg shows all 6 providers (Claude + 5 OpenAI-compat) with status
+- Shows set/not set for each provider
 
 ### Workspace Boundary Protection (kodiqa.py: `_check_workspace_boundary`)
 - Checks if tool accesses files outside the current working directory
@@ -200,7 +262,7 @@ tests/           156 tests, all passing (~0.25s)
 ### Session & State
 - `~/.kodiqa/session.json` — auto-saved conversation for crash recovery
 - `~/.kodiqa/memory.db` — SQLite persistent memory (survives across sessions)
-- `~/.kodiqa/settings.json` — API keys (Claude, Qwen, Google), default model
+- `~/.kodiqa/settings.json` — API keys (Claude, OpenAI, DeepSeek, Groq, Mistral, Qwen, Google), default model
 - `~/.kodiqa/config.json` — user-editable config (overrides defaults)
 - `~/.kodiqa/input_history` — prompt_toolkit FileHistory
 - `~/.kodiqa/KODIQA.md` — global context file (always loaded into system prompt)
@@ -261,12 +323,12 @@ source ~/LLMS/kodiqa/venv/bin/activate && pytest -v
 - Python 3.9+, rich, beautifulsoup4, requests, prompt_toolkit, pytest (dev)
 - Ollama installed at `/Applications/Ollama.app`
 - Virtual environment at `./venv/`
-- Current version: v1.6.0
+- Current version: v1.7.0
 
 ### Adding a New Tool
 1. Add the handler function `do_<name>()` in `actions.py`
 2. Register it in `_dispatch()` handler map in `actions.py`
-3. Add it to `CLAUDE_TOOLS` list in `tools.py` (used by both Claude and Qwen)
+3. Add it to `CLAUDE_TOOLS` list in `tools.py` (used by both Claude and OpenAI-compat)
 4. Add `[ACTION: name]` docs to `SYSTEM_PROMPT` in `config.py` (for Ollama text mode)
 5. If it needs confirmation, add to `CONFIRM_ACTIONS` in `config.py`
 6. If it's read-only, add to `read_only` set in `execute_tools_parallel()` in `actions.py`
@@ -274,26 +336,25 @@ source ~/LLMS/kodiqa/venv/bin/activate && pytest -v
 8. Add description to `_describe_action()` in `actions.py`
 
 ### Adding a New API Provider
-1. Add aliases dict and API URL constant in `config.py`
-2. Add `is_<provider>_model()` detection function in `config.py`
-3. Add `_chat_<provider>()`, `_call_<provider>_stream()`, `_multi_query_<provider>()`, `_<provider>_nostream()` in `kodiqa.py`
-4. Update `_chat()` dispatch, `_chat_multi()`, `_compact()`, `/model`, `/key`, `/help`, `_list_models()`, `_welcome()`
+1. Add entry to `OPENAI_COMPAT_PROVIDERS` in `config.py` with url, models_url, key_setting, key_prefix, color, label, aliases
+2. That's it — the generic `_chat_openai_compat(provider)` handles everything automatically
+3. (Optional) Add provider-specific context limit in `_context_limit()` in `kodiqa.py`
 
 ### Adding a New Model Alias
-Add to `MODEL_ALIASES` (Ollama), `CLAUDE_ALIASES` (Claude API), or `QWEN_ALIASES` (Qwen API) in `config.py`. Or just use full model name — live API models are auto-discovered.
+Add to `MODEL_ALIASES` (Ollama), `CLAUDE_ALIASES` (Claude API), or the provider's `aliases` dict in `OPENAI_COMPAT_PROVIDERS` (config.py). Or just use full model name — live API models are auto-discovered.
 
 ### Adding a New Slash Command
 Add the handler in `_handle_slash()` method in `kodiqa.py`. Update `/help` text. Add to `_SLASH_COMMANDS` list.
 
 ## Conventions
-- 156 tests via pytest (`tests/` directory)
+- 165 tests via pytest (`tests/` directory)
 - No type hints — plain Python 3.9 style
 - Rich library for all terminal UI (panels, markdown, prompts, status spinners)
 - All file paths are expanded with `os.path.expanduser()` before use
 - Action results are truncated at 20,000 chars to avoid context overflow
 - Diff preview shown before every file write/edit (capped at 50 lines)
 - `git_commit` does `git add -A` then commits (stages everything)
-- API colors: Claude = yellow, Qwen = blue, Ollama = green, Consensus = magenta
+- API colors: Claude=yellow, OpenAI=white, DeepSeek=cyan, Groq=red, Mistral=magenta, Qwen=blue, Ollama=green, Consensus=magenta
 - Per-file undo buffer: `deque(maxlen=10)` storing content before each edit/write
 - Shell env detection at startup (OS, shell, Python, git, node, cargo, go, java, docker)
 - prompt_toolkit for `❯` prompt with separator line, tab completion, file history
