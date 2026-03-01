@@ -287,7 +287,7 @@ path: /absolute/path/to/file
 ### Multi-Edit (apply multiple edits to one file at once)
 [ACTION: multi_edit]
 path: /absolute/path/to/file
-edits: [{"old_string": "find this", "new_string": "replace with"}, ...]
+edits: [{{"old_string": "find this", "new_string": "replace with"}}, ...]
 [/ACTION]
 
 ### Clipboard
