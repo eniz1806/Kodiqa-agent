@@ -1,6 +1,20 @@
-# Kodiqa - Local AI Coding Agent
+<p align="center">
+  <img src="assets/logo.svg" alt="Kodiqa Logo" width="700"/>
+</p>
 
-Your personal Claude Code clone running 100% locally with free models — or powered by 6 cloud APIs (Claude, OpenAI, DeepSeek, Groq, Mistral, Qwen) for maximum intelligence.
+<p align="center">
+  <strong>Your personal Claude Code clone running 100% locally with free models — or powered by 6 cloud APIs for maximum intelligence.</strong>
+</p>
+
+<p align="center">
+  <a href="#install"><img src="https://img.shields.io/badge/python-3.9+-blue?logo=python&logoColor=white" alt="Python 3.9+"/></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-purple" alt="License"/></a>
+  <a href="#testing"><img src="https://img.shields.io/badge/tests-165%20passing-brightgreen" alt="Tests"/></a>
+  <a href="#api-setup"><img src="https://img.shields.io/badge/providers-7-cyan" alt="7 Providers"/></a>
+  <a href="#26-tools"><img src="https://img.shields.io/badge/tools-26-orange" alt="26 Tools"/></a>
+</p>
+
+---
 
 ## Install
 
