@@ -1,6 +1,6 @@
 # Kodiqa - Local AI Coding Agent
 
-Your personal Claude Code clone running 100% locally with free models — or powered by Claude/Qwen API for maximum intelligence.
+Your personal Claude Code clone running 100% locally with free models — or powered by 6 cloud APIs (Claude, OpenAI, DeepSeek, Groq, Mistral, Qwen) for maximum intelligence.
 
 ## Install
 
@@ -19,7 +19,7 @@ kodiqa
 
 - **Claude Code-style UI** — `❯` prompt with separator line (prompt_toolkit), arrow-key navigation for all prompts
 - **26 tools** — file ops, git, search, web, memory, clipboard, multi-edit, undo, diff apply
-- **3 API providers** — Ollama (local/free), Claude API, Qwen API (DashScope)
+- **7 API providers** — Ollama (local/free), Claude, OpenAI, DeepSeek, Groq, Mistral, Qwen
 - **MCP server support** — connect external tool servers via Model Context Protocol
 - **Auto model discovery** — new Claude/Qwen models appear automatically from APIs
 - **Interactive pickers** — `/model` and `/key` show numbered menus, navigate with arrows
@@ -54,7 +54,7 @@ kodiqa
 - **`.kodiqaignore`** — per-project file exclusion (like `.gitignore` for scans/searches)
 - **Budget limit** — `/budget 5` sets $5 session limit, warns at 80%, blocks at 100%
 - **Auto-lint** — `/lint ruff check --fix` runs linter after edits, feeds errors back to AI
-- **156 tests** — pytest test suite, all passing
+- **165 tests** — pytest test suite, all passing
 
 ## Arrow-Key UI
 
@@ -167,7 +167,7 @@ MCP tools are automatically available to the AI alongside built-in tools.
 | `/model qwen` | qwen3:14b | General purpose, smart, thinking mode |
 | `/model coder` | qwen3-coder | Coding agent (default without API key) |
 | `/model reason` | phi4-reasoning | Deep reasoning, math, logic |
-| `/model gpt` | gpt-oss | OpenAI's open model, reasoning + agentic |
+| `/model gpt-local` | gpt-oss | OpenAI's open model, reasoning + agentic |
 
 ### Claude API Models (paid, requires API key)
 
@@ -193,6 +193,40 @@ MCP tools are automatically available to the AI alongside built-in tools.
 | `/model qwen-long` | qwen-long-latest | 10M context |
 | `/model qwen-math` | qwen-math-plus | Math |
 | `/model qwen-turbo` | qwen-turbo | Cheapest/fastest |
+
+### OpenAI API Models (paid, requires API key)
+
+| Shortcut | Full Model | Best For |
+|----------|-----------|----------|
+| `/model gpt` | gpt-4o | General purpose flagship |
+| `/model gpt-mini` | gpt-4o-mini | Fast and cheap |
+| `/model o3` | o3 | Deep reasoning |
+| `/model o3-mini` | o3-mini | Fast reasoning |
+| `/model o4-mini` | o4-mini | Latest reasoning |
+
+### DeepSeek API Models (paid, requires API key)
+
+| Shortcut | Full Model | Best For |
+|----------|-----------|----------|
+| `/model deepseek` | deepseek-chat | V3 general purpose |
+| `/model deepseek-r1` | deepseek-reasoner | R1 deep reasoning |
+
+### Groq API Models (free tier available)
+
+| Shortcut | Full Model | Best For |
+|----------|-----------|----------|
+| `/model llama` | llama-3.3-70b-versatile | Best open model |
+| `/model llama-small` | llama-3.1-8b-instant | Ultra fast |
+| `/model gemma` | gemma2-9b-it | Google's open model |
+| `/model mixtral` | mixtral-8x7b-32768 | MoE, 32K context |
+
+### Mistral API Models (paid, requires API key)
+
+| Shortcut | Full Model | Best For |
+|----------|-----------|----------|
+| `/model mistral` | mistral-large-latest | Flagship |
+| `/model mistral-small` | mistral-small-latest | Fast and cheap |
+| `/model codestral` | codestral-latest | Code generation |
 
 New models are auto-discovered from the APIs — they appear in `/model` and `/models` automatically.
 
@@ -220,19 +254,18 @@ Use `/verbose` to toggle full output (see all code as it streams).
 
 ## API Setup
 
-### Claude API
-```
-/key              → choose Claude, paste API key
-/model claude     → use Claude Sonnet 4.6
-```
-Get your key: https://console.anthropic.com/settings/keys
+Use `/key` to add API keys interactively (shows all 6 providers), or specify directly:
 
-### Qwen API (Alibaba Cloud DashScope)
-```
-/key              → choose Qwen, paste API key
-/model qwen3.5    → use Qwen 3.5 Plus
-```
-Get your key: https://bailian.console.alibabacloud.com/?apiKey=1
+| Provider | Command | Get Key |
+|----------|---------|---------|
+| Claude | `/key claude` | https://console.anthropic.com/settings/keys |
+| OpenAI | `/key openai` | https://platform.openai.com/api-keys |
+| DeepSeek | `/key deepseek` | https://platform.deepseek.com/api_keys |
+| Groq | `/key groq` | https://console.groq.com/keys |
+| Mistral | `/key mistral` | https://console.mistral.ai/api-keys |
+| Qwen | `/key qwen` | https://bailian.console.alibabacloud.com/?apiKey=1 |
+
+Then switch: `/model claude`, `/model gpt`, `/model deepseek`, `/model llama`, `/model mistral`, `/model qwen3.5`
 
 ## What You Can Ask
 
@@ -377,7 +410,7 @@ find any bugs in this code
 |---------|--------|-------------|-------|------------|----------|
 | **Price** | Free (Ollama) or pay-per-token | $20/mo (Pro) or pay-per-token | Pay-per-token only | Free (Gemini Flash) | Pay-per-token only |
 | **Local/offline** | Yes (Ollama) | No | No | No | Yes (Ollama) |
-| **API providers** | 3 (Ollama, Claude, Qwen) | 1 (Claude) | 10+ (OpenAI, Claude, etc.) | 1 (Gemini) | 75+ (OpenAI, Claude, Gemini, Ollama, etc.) |
+| **API providers** | 7 (Ollama, Claude, OpenAI, DeepSeek, Groq, Mistral, Qwen) | 1 (Claude) | 10+ (OpenAI, Claude, etc.) | 1 (Gemini) | 75+ (OpenAI, Claude, Gemini, Ollama, etc.) |
 | **Tools** | 26 built-in | ~15 built-in | ~10 built-in | ~12 built-in | ~12 built-in |
 | **MCP support** | Yes | Yes | No | Yes | Yes |
 | **Multi-model** | Yes (consensus mode) | No | No | No | No |
@@ -401,7 +434,7 @@ find any bugs in this code
 | **Desktop app / IDE** | No | Yes (VS Code) | No | No | Yes (VS Code, desktop) |
 | **Install** | `pip install .` | `npm install -g` | `pip install` | `npm install -g` | `go install` / `npm` |
 | **Language** | Python | TypeScript | Python | TypeScript | Go |
-| **Tests** | 156 | Yes | Yes | Yes | Yes |
+| **Tests** | 165 | Yes | Yes | Yes | Yes |
 | **Open source** | Yes (AGPL-3.0) | Yes (Apache-2.0) | Yes (Apache-2.0) | Yes (Apache-2.0) | Yes (MIT) |
 
 **Kodiqa's unique advantages**: free local models, 3 API providers, multi-model consensus, batch edit review, conversation branching, budget limits, auto-lint, and auto model discovery — features no other agent offers together.
@@ -409,7 +442,7 @@ find any bugs in this code
 ## Testing
 
 ```bash
-pytest -v          # 156 tests, all passing
+pytest -v          # 165 tests, all passing
 ```
 
 ## Requirements

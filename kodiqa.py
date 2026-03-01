@@ -27,9 +27,9 @@ from config import (
     OLLAMA_URL, OLLAMA_BIN, DEFAULT_MODEL, MODEL_ALIASES, CLAUDE_ALIASES,
     CLAUDE_API_URL, QWEN_ALIASES, QWEN_API_URL, CONTEXT_FILE, KODIQA_DIR,
     CONFIG_FILE, SYSTEM_PROMPT, SKIP_DIRS, SKIP_EXTENSIONS,
-    MAX_FILE_SIZE, DEFAULTS,
+    MAX_FILE_SIZE, DEFAULTS, OPENAI_COMPAT_PROVIDERS,
     load_settings, save_settings, load_config, save_default_config, load_kodiqaignore,
-    is_claude_model, is_qwen_api_model,
+    is_claude_model, is_qwen_api_model, get_openai_provider, is_openai_compat_model,
 )
 from memory import MemoryStore
 from actions import (
@@ -336,7 +336,9 @@ class KodiqaCompleter(Completer):
                     # Context-aware argument completion
                     cmd = text.strip().split()[0]
                     if cmd in ("/model",):
-                        all_aliases = list(MODEL_ALIASES.keys()) + list(CLAUDE_ALIASES.keys()) + list(QWEN_ALIASES.keys())
+                        all_aliases = list(MODEL_ALIASES.keys()) + list(CLAUDE_ALIASES.keys())
+                        for pv in OPENAI_COMPAT_PROVIDERS.values():
+                            all_aliases.extend(pv["aliases"].keys())
                         for a in all_aliases:
                             if a.startswith(word):
                                 yield Completion(a, start_position=-len(word))
@@ -348,6 +350,10 @@ class KodiqaCompleter(Completer):
                         for e in ("duckduckgo", "google", "api"):
                             if e.startswith(word):
                                 yield Completion(e, start_position=-len(word))
+                    elif cmd in ("/key",):
+                        for name in ["claude"] + list(OPENAI_COMPAT_PROVIDERS.keys()):
+                            if name.startswith(word):
+                                yield Completion(name, start_position=-len(word))
                     elif cmd in ("/cd", "/scan"):
                         yield from self._complete_path(word)
                     elif cmd in ("/restore",):
@@ -376,6 +382,10 @@ class Kodiqa:
         save_default_config()
         _setup_error_log()
         self.claude_key = self.settings.get("claude_api_key", "")
+        # Load all OpenAI-compatible provider API keys
+        self.api_keys = {}
+        for prov_name, prov in OPENAI_COMPAT_PROVIDERS.items():
+            self.api_keys[prov_name] = self.settings.get(prov["key_setting"], "")
         self.session_file = os.path.join(KODIQA_DIR, "session.json")
         self.multi_models = []  # default: single model mode
         self._auto_approved = set()  # action types auto-approved this session
@@ -394,7 +404,7 @@ class Kodiqa:
             completer=KodiqaCompleter(self),
             style=self._pt_style,
         )
-        self.qwen_key = self.settings.get("qwen_api_key", "")
+        self.qwen_key = self.api_keys.get("qwen", "")  # backward compat alias
         # Load Google API keys if saved
         g_key = self.settings.get("google_api_key", "")
         g_cx = self.settings.get("google_cx", "")
@@ -697,21 +707,24 @@ class Kodiqa:
     def _welcome(self):
         if is_claude_model(self.model) or self._is_live_claude(self.model):
             provider = "[yellow]Claude API[/]"
-        elif is_qwen_api_model(self.model) or self._is_live_qwen(self.model):
-            provider = "[blue]Qwen API[/]"
         else:
-            # Check if the local model actually exists
-            local_ok = False
-            try:
-                resp = requests.get(f"{OLLAMA_URL}/api/tags", timeout=3)
-                installed = [m["name"] for m in resp.json().get("models", [])]
-                local_ok = any(m.startswith(self.model.split(":")[0]) for m in installed)
-            except Exception:
-                pass
-            if local_ok:
-                provider = "[green]Local/Ollama[/]"
+            prov_name = self._get_provider_for_model(self.model)
+            if prov_name:
+                prov = OPENAI_COMPAT_PROVIDERS[prov_name]
+                provider = f"[{prov['color']}]{prov['label']} API[/]"
             else:
-                provider = "[red]not installed[/]"
+                # Check if the local model actually exists
+                local_ok = False
+                try:
+                    resp = requests.get(f"{OLLAMA_URL}/api/tags", timeout=3)
+                    installed = [m["name"] for m in resp.json().get("models", [])]
+                    local_ok = any(m.startswith(self.model.split(":")[0]) for m in installed)
+                except Exception:
+                    pass
+                if local_ok:
+                    provider = "[green]Local/Ollama[/]"
+                else:
+                    provider = "[red]not installed[/]"
         git_line = ""
         if self.git_info:
             g = self.git_info
@@ -729,7 +742,8 @@ class Kodiqa:
         ))
         # Guide user if model isn't available
         if provider == "[red]not installed[/]":
-            if self.claude_key or self.qwen_key:
+            has_any_key = self.claude_key or any(self.api_keys.get(p, "") for p in OPENAI_COMPAT_PROVIDERS)
+            if has_any_key:
                 self.console.print("[yellow]Local model not found.[/] Use [bold]/model[/] to pick a cloud model.")
             else:
                 self.console.print(
@@ -761,8 +775,8 @@ class Kodiqa:
             )
             if is_claude_model(self.model):
                 summary = self._claude_nostream(summary_prompt, self.history)
-            elif is_qwen_api_model(self.model):
-                summary = self._qwen_nostream(summary_prompt, self.history)
+            elif self._get_provider_for_model(self.model):
+                summary = self._openai_compat_nostream(summary_prompt, self.history)
             else:
                 msgs = [{"role": "system", "content": summary_prompt}] + self.history
                 msgs.append({"role": "user", "content": summary_prompt})
@@ -1006,12 +1020,16 @@ class Kodiqa:
             sys.exit(0)
         elif command == "/help":
             claude_status = "[green]connected[/]" if self.claude_key else "[dim]not set[/]"
-            qwen_status = "[green]connected[/]" if self.qwen_key else "[dim]not set[/]"
+            provider_lines = [f"  [dim]Claude: claude, sonnet, haiku, opus ({claude_status})[/]"]
+            for pn, pv in OPENAI_COMPAT_PROVIDERS.items():
+                k = self.api_keys.get(pn, "")
+                st = "[green]connected[/]" if k else "[dim]not set[/]"
+                aliases = ", ".join(list(pv["aliases"].keys())[:4])
+                provider_lines.append(f"  [dim]{pv['label']}: {aliases} ({st})[/]")
             self.console.print(Panel(
                 "[bold]/model <name>[/]  - Switch model\n"
-                "  [dim]Local: fast, qwen, coder, reason, gpt[/]\n"
-                f"  [dim]Claude: claude, sonnet, haiku, opus ({claude_status})[/]\n"
-                f"  [dim]Qwen API: qwen-api, qwen-max, qwen-coder-api, qwen-flash-api ({qwen_status})[/]\n"
+                "  [dim]Local: fast, qwen, coder, reason, gpt-local[/]\n"
+                + "\n".join(provider_lines) + "\n"
                 "[bold]/multi <models>[/] - Multi-model mode (e.g. /multi coder qwen reason)\n"
                 "[bold]/single[/]        - Back to single model mode\n"
                 "[bold]/models[/]       - List all available models\n"
@@ -1041,7 +1059,8 @@ class Kodiqa:
             ))
         elif command == "/model":
             if not arg:
-                provider = "Claude API" if is_claude_model(self.model) else ("Qwen API" if is_qwen_api_model(self.model) else "Local/Ollama")
+                _prov = self._get_provider_for_model(self.model)
+                provider = OPENAI_COMPAT_PROVIDERS[_prov]["label"] + " API" if _prov else ("Claude API" if is_claude_model(self.model) else "Local/Ollama")
                 self.console.print(f"Current model: [cyan]{self.model}[/] ({provider})\n")
                 # Build numbered list of all available models
                 choices = []
@@ -1050,25 +1069,27 @@ class Kodiqa:
                     choices.append((alias, full, "local"))
                     marker = " [cyan]◀[/]" if full == self.model else ""
                     self.console.print(f"  {len(choices)}. {alias} [dim]→ {full}[/]{marker}")
-                extra_claude, extra_qwen = self._get_api_model_choices()
+                extras = self._get_api_model_choices()
                 if self.claude_key:
                     self.console.print("[bold yellow]Claude API:[/]")
                     for alias, full in CLAUDE_ALIASES.items():
                         choices.append((alias, full, "claude"))
                         marker = " [cyan]◀[/]" if full == self.model else ""
                         self.console.print(f"  {len(choices)}. {alias} [dim]→ {full}[/]{marker}")
-                    for m in extra_claude:
+                    for m in extras.get("claude", []):
                         choices.append((m, m, "claude"))
                         marker = " [cyan]◀[/]" if m == self.model else ""
                         self.console.print(f"  {len(choices)}. [dim]{m}[/] [dim](live)[/]{marker}")
-                if self.qwen_key:
-                    self.console.print("[bold blue]Qwen API:[/]")
-                    for alias, full in QWEN_ALIASES.items():
-                        choices.append((alias, full, "qwen"))
+                for pn, pv in OPENAI_COMPAT_PROVIDERS.items():
+                    if not self.api_keys.get(pn, ""):
+                        continue
+                    self.console.print(f"[bold {pv['color']}]{pv['label']} API:[/]")
+                    for alias, full in pv["aliases"].items():
+                        choices.append((alias, full, pn))
                         marker = " [cyan]◀[/]" if full == self.model else ""
                         self.console.print(f"  {len(choices)}. {alias} [dim]→ {full}[/]{marker}")
-                    for m in extra_qwen:
-                        choices.append((m, m, "qwen"))
+                    for m in extras.get(pn, []):
+                        choices.append((m, m, pn))
                         marker = " [cyan]◀[/]" if m == self.model else ""
                         self.console.print(f"  {len(choices)}. [dim]{m}[/] [dim](live)[/]{marker}")
                 self.console.print()
@@ -1082,23 +1103,25 @@ class Kodiqa:
                     return
                 if pick.isdigit() and 1 <= int(pick) <= len(choices):
                     alias, full, prov = choices[int(pick) - 1]
-                    # Direct pick by number — use provider from list
                     self.model = full
                     self.multi_models = []
                     if prov == "claude":
                         self._stop_ollama()
-                        provider = "[yellow]Claude API[/]"
-                    elif prov == "qwen":
-                        self._stop_ollama()
-                        provider = "[blue]Qwen API[/]"
-                    else:
-                        provider = "[green]Local[/]"
+                        prov_str = "[yellow]Claude API[/]"
+                    elif prov == "local":
+                        prov_str = "[green]Local[/]"
                         self._ensure_ollama()
-                    self.console.print(f"Switched to [cyan]{self.model}[/] ({provider}) [dim](single mode)[/]")
+                    else:
+                        self._stop_ollama()
+                        prov_str = f"[{OPENAI_COMPAT_PROVIDERS[prov]['color']}]{OPENAI_COMPAT_PROVIDERS[prov]['label']} API[/]"
+                    self.console.print(f"Switched to [cyan]{self.model}[/] ({prov_str}) [dim](single mode)[/]")
                     self.console.print("[dim]Use /multi all to go back to multi-model mode[/]")
                     return
                 else:
                     arg = pick
+            # Resolve alias to model name
+            new_model = arg
+            resolved_prov = None
             if arg in CLAUDE_ALIASES:
                 if not self.claude_key:
                     self.console.print("[yellow]No Claude API key set.[/]")
@@ -1111,33 +1134,43 @@ class Kodiqa:
                     save_settings(self.settings)
                     self.console.print("[green]API key saved![/]")
                 new_model = CLAUDE_ALIASES[arg]
-            elif arg in QWEN_ALIASES:
-                if not self.qwen_key:
-                    self.console.print("[yellow]No Qwen API key set.[/]")
-                    key = Prompt.ask("[bold]Enter your DashScope API key[/] (or 'skip' to cancel)")
-                    if key.strip().lower() == "skip" or not key.strip():
-                        self.console.print("[dim]Cancelled. Staying on current model.[/]")
-                        return
-                    self.qwen_key = key.strip()
-                    self.settings["qwen_api_key"] = self.qwen_key
-                    save_settings(self.settings)
-                    self.console.print("[green]Qwen API key saved![/]")
-                new_model = QWEN_ALIASES[arg]
-            elif arg in MODEL_ALIASES:
-                new_model = MODEL_ALIASES[arg]
+                resolved_prov = "claude"
             else:
-                new_model = arg
+                # Check all OpenAI-compat providers
+                for pn, pv in OPENAI_COMPAT_PROVIDERS.items():
+                    if arg in pv["aliases"]:
+                        if not self.api_keys.get(pn, ""):
+                            self.console.print(f"[yellow]No {pv['label']} API key set.[/]")
+                            key = Prompt.ask(f"[bold]Enter your {pv['label']} API key[/] (or 'skip')")
+                            if key.strip().lower() == "skip" or not key.strip():
+                                self.console.print("[dim]Cancelled.[/]")
+                                return
+                            self.api_keys[pn] = key.strip()
+                            self.settings[pv["key_setting"]] = key.strip()
+                            if pn == "qwen":
+                                self.qwen_key = key.strip()
+                            save_settings(self.settings)
+                            self.console.print(f"[green]{pv['label']} API key saved![/]")
+                        new_model = pv["aliases"][arg]
+                        resolved_prov = pn
+                        break
+                if not resolved_prov:
+                    if arg in MODEL_ALIASES:
+                        new_model = MODEL_ALIASES[arg]
             self.model = new_model
-            self.multi_models = []  # switch to single mode
-            if is_claude_model(self.model) or is_qwen_api_model(self.model) or self._is_live_claude(self.model) or self._is_live_qwen(self.model):
+            self.multi_models = []
+            # Determine provider for display
+            if resolved_prov == "claude" or is_claude_model(self.model) or self._is_live_claude(self.model):
                 self._stop_ollama()
-            if is_claude_model(self.model) or self._is_live_claude(self.model):
                 provider = "[yellow]Claude API[/]"
-            elif is_qwen_api_model(self.model) or self._is_live_qwen(self.model):
-                provider = "[blue]Qwen API[/]"
             else:
-                provider = "[green]Local[/]"
-                self._ensure_ollama()
+                _pn = self._get_provider_for_model(self.model)
+                if _pn:
+                    self._stop_ollama()
+                    provider = f"[{OPENAI_COMPAT_PROVIDERS[_pn]['color']}]{OPENAI_COMPAT_PROVIDERS[_pn]['label']} API[/]"
+                else:
+                    provider = "[green]Local[/]"
+                    self._ensure_ollama()
             self.console.print(f"Switched to [cyan]{self.model}[/] ({provider}) [dim](single mode)[/]")
             self.console.print("[dim]Use /multi all to go back to multi-model mode[/]")
         elif command == "/multi":
@@ -1171,11 +1204,13 @@ class Kodiqa:
                             self.console.print(f"[red]{name} needs Claude API key. Use /key to add one.[/]")
                             return
                         resolved.append(CLAUDE_ALIASES[name])
-                    elif name in QWEN_ALIASES:
-                        if not self.qwen_key:
-                            self.console.print(f"[red]{name} needs Qwen API key. Use /key qwen to add one.[/]")
+                    elif get_openai_provider(name):
+                        _pn = get_openai_provider(name)
+                        _pv = OPENAI_COMPAT_PROVIDERS[_pn]
+                        if not self.api_keys.get(_pn, ""):
+                            self.console.print(f"[red]{name} needs {_pv['label']} API key. Use /key {_pn} to add one.[/]")
                             return
-                        resolved.append(QWEN_ALIASES[name])
+                        resolved.append(_pv["aliases"][name])
                     elif name in MODEL_ALIASES:
                         resolved.append(MODEL_ALIASES[name])
                     else:
@@ -1445,26 +1480,33 @@ class Kodiqa:
             self.console.print(f"[red]Unknown command: {command}. Type /help[/]")
 
     def _setup_api_key(self, provider=None):
-        if provider == "qwen":
-            self._setup_qwen_key()
-            return
         if provider == "claude":
             self._setup_claude_key()
             return
-        # No provider specified — ask which one
-        claude_status = "[green]set[/]" if self.claude_key else "[dim]not set[/]"
-        qwen_status = "[green]set[/]" if self.qwen_key else "[dim]not set[/]"
-        self.console.print(f"  1. Claude API ({claude_status})")
-        self.console.print(f"  2. Qwen API  ({qwen_status})")
+        if provider in OPENAI_COMPAT_PROVIDERS:
+            self._setup_provider_key(provider)
+            return
+        # No provider specified — show all
+        providers = [("claude", "Claude API", self.claude_key)]
+        for prov_name, prov in OPENAI_COMPAT_PROVIDERS.items():
+            providers.append((prov_name, prov["label"] + " API", self.api_keys.get(prov_name, "")))
+        for i, (name, label, key) in enumerate(providers, 1):
+            status = "[green]set[/]" if key else "[dim]not set[/]"
+            self.console.print(f"  {i}. {label} ({status})")
+        valid = [str(i) for i in range(1, len(providers) + 1)] + [p[0] for p in providers]
         try:
-            choice = Prompt.ask("[bold]Which provider?[/]", choices=["1", "2", "claude", "qwen"], default="1")
+            choice = Prompt.ask("[bold]Which provider?[/]", choices=valid, default="1")
         except (EOFError, KeyboardInterrupt):
             self.console.print("\n[dim]Cancelled.[/]")
             return
-        if choice in ("2", "qwen"):
-            self._setup_qwen_key()
+        if choice.isdigit():
+            prov_name = providers[int(choice) - 1][0]
         else:
+            prov_name = choice
+        if prov_name == "claude":
             self._setup_claude_key()
+        else:
+            self._setup_provider_key(prov_name)
 
     def _setup_claude_key(self):
         if self.claude_key:
@@ -1492,36 +1534,42 @@ class Kodiqa:
         except (EOFError, KeyboardInterrupt):
             self.console.print("\n[dim]Cancelled.[/]")
 
-    def _setup_qwen_key(self):
-        if self.qwen_key:
-            masked = self.qwen_key[:8] + "..." + self.qwen_key[-4:]
-            self.console.print(f"Current Qwen key: [dim]{masked}[/]")
+    def _setup_provider_key(self, provider):
+        """Generic key setup for any OpenAI-compatible provider."""
+        prov = OPENAI_COMPAT_PROVIDERS[provider]
+        current_key = self.api_keys.get(provider, "")
+        if current_key:
+            masked = current_key[:8] + "..." + current_key[-4:]
+            self.console.print(f"Current {prov['label']} key: [dim]{masked}[/]")
         try:
-            key = Prompt.ask("[bold blue]Paste DashScope API key (or 'remove' to delete)[/]")
+            key = Prompt.ask(f"[bold {prov['color']}]Paste {prov['label']} API key (or 'remove')[/]")
             key = key.strip()
             if key.lower() == "remove":
-                self.qwen_key = ""
-                self.settings.pop("qwen_api_key", None)
-                if is_qwen_api_model(self.model):
+                self.api_keys[provider] = ""
+                self.settings.pop(prov["key_setting"], None)
+                if self._get_provider_for_model(self.model) == provider:
                     self.model = DEFAULT_MODEL
                     self.settings["default_model"] = DEFAULT_MODEL
                 save_settings(self.settings)
-                self.console.print("[dim]Qwen API key removed. Switched to local models.[/]")
-            elif key.startswith("sk-"):
-                self.qwen_key = key
-                self.settings["qwen_api_key"] = key
+                self.console.print(f"[dim]{prov['label']} API key removed.[/]")
+            elif not prov["key_prefix"] or key.startswith(prov["key_prefix"]):
+                self.api_keys[provider] = key
+                self.settings[prov["key_setting"]] = key
+                if provider == "qwen":
+                    self.qwen_key = key
                 save_settings(self.settings)
-                self.console.print("[green]Qwen API key saved![/]")
-                self.console.print("[dim]Use /model qwen-api to switch to Qwen API.[/]")
+                self.console.print(f"[green]{prov['label']} API key saved![/]")
             else:
-                self.console.print("[yellow]Key doesn't look right (should start with sk-). Not saved.[/]")
+                self.console.print(f"[yellow]Key should start with {prov['key_prefix']}. Not saved.[/]")
         except (EOFError, KeyboardInterrupt):
             self.console.print("\n[dim]Cancelled.[/]")
 
     def _fetch_api_models(self):
-        """Fetch live model lists from Claude and Qwen APIs. Caches results."""
+        """Fetch live model lists from Claude and all OpenAI-compat APIs. Caches results."""
         if not hasattr(self, "_cached_api_models"):
-            self._cached_api_models = {"claude": [], "qwen": [], "_ts": 0}
+            self._cached_api_models = {"claude": [], "_ts": 0}
+            for prov_name in OPENAI_COMPAT_PROVIDERS:
+                self._cached_api_models[prov_name] = []
         import time
         # Cache for 10 minutes
         if time.time() - self._cached_api_models.get("_ts", 0) < 600:
@@ -1537,7 +1585,6 @@ class Kodiqa:
                 )
                 if resp.status_code == 200:
                     data = resp.json().get("data", [])
-                    # Filter to chat models only
                     for m in data:
                         mid = m.get("id", "")
                         if mid.startswith("claude-") and "embed" not in mid:
@@ -1545,37 +1592,41 @@ class Kodiqa:
                     claude_models.sort()
             except Exception:
                 pass
-        # Fetch Qwen models
-        qwen_models = []
-        if self.qwen_key:
+        # Fetch all OpenAI-compatible provider models
+        result = {"claude": claude_models, "_ts": time.time()}
+        for prov_name, prov in OPENAI_COMPAT_PROVIDERS.items():
+            key = self.api_keys.get(prov_name, "")
+            if not key:
+                result[prov_name] = []
+                continue
+            models = []
             try:
                 resp = requests.get(
-                    QWEN_API_URL.replace("/chat/completions", "/models"),
-                    headers={"Authorization": f"Bearer {self.qwen_key}"},
+                    prov.get("models_url", prov["url"].replace("/chat/completions", "/models")),
+                    headers={"Authorization": f"Bearer {key}"},
                     timeout=10,
                 )
                 if resp.status_code == 200:
                     data = resp.json().get("data", [])
                     for m in data:
                         mid = m.get("id", "")
-                        if mid.startswith("qwen") or mid.startswith("qwq"):
-                            qwen_models.append(mid)
-                    qwen_models.sort()
+                        if mid:
+                            models.append(mid)
+                    models.sort()
             except Exception:
                 pass
-        self._cached_api_models = {
-            "claude": claude_models,
-            "qwen": qwen_models,
-            "_ts": time.time(),
-        }
+            result[prov_name] = models
+        self._cached_api_models = result
         return self._cached_api_models
 
     def _get_api_model_choices(self):
         """Get models from APIs that aren't already in aliases."""
         live = self._fetch_api_models()
-        extra_claude = [m for m in live["claude"] if m not in CLAUDE_ALIASES.values()]
-        extra_qwen = [m for m in live["qwen"] if m not in QWEN_ALIASES.values()]
-        return extra_claude, extra_qwen
+        extras = {}
+        extras["claude"] = [m for m in live.get("claude", []) if m not in CLAUDE_ALIASES.values()]
+        for prov_name, prov in OPENAI_COMPAT_PROVIDERS.items():
+            extras[prov_name] = [m for m in live.get(prov_name, []) if m not in prov["aliases"].values()]
+        return extras
 
     def _list_models(self):
         choices = []  # list of (model_name, provider)
@@ -1588,7 +1639,8 @@ class Kodiqa:
                 choices.append((model, "claude"))
                 marker = " [cyan]◀[/]" if model == self.model else ""
                 lines.append(f"  [dim]{n:>3}.[/] [cyan]{model}[/] [dim](/{alias})[/]{marker}")
-            extra_claude, _ = self._get_api_model_choices()
+            extras = self._get_api_model_choices()
+            extra_claude = extras.get("claude", [])
             if extra_claude:
                 lines.append("  [dim]── additional (from API) ──[/]")
                 for m in extra_claude:
@@ -1597,19 +1649,24 @@ class Kodiqa:
                     marker = " [cyan]◀[/]" if m == self.model else ""
                     lines.append(f"  [dim]{n:>3}.[/] [cyan]{m}[/]{marker}")
             lines.append("")
-        if self.qwen_key:
-            lines.append("[bold blue]Qwen API:[/]")
-            for alias, model in QWEN_ALIASES.items():
+        # All OpenAI-compatible providers
+        extras = self._get_api_model_choices()
+        for prov_name, prov in OPENAI_COMPAT_PROVIDERS.items():
+            key = self.api_keys.get(prov_name, "")
+            if not key:
+                continue
+            lines.append(f"[bold {prov['color']}]{prov['label']} API:[/]")
+            for alias, model in prov["aliases"].items():
                 n += 1
-                choices.append((model, "qwen"))
+                choices.append((model, prov_name))
                 marker = " [cyan]◀[/]" if model == self.model else ""
                 lines.append(f"  [dim]{n:>3}.[/] [cyan]{model}[/] [dim](/{alias})[/]{marker}")
-            _, extra_qwen = self._get_api_model_choices()
-            if extra_qwen:
+            extra = extras.get(prov_name, [])
+            if extra:
                 lines.append("  [dim]── additional (from API) ──[/]")
-                for m in extra_qwen:
+                for m in extra:
                     n += 1
-                    choices.append((m, "qwen"))
+                    choices.append((m, prov_name))
                     marker = " [cyan]◀[/]" if m == self.model else ""
                     lines.append(f"  [dim]{n:>3}.[/] [cyan]{m}[/]{marker}")
             lines.append("")
@@ -1642,19 +1699,20 @@ class Kodiqa:
             if pick.lower() in ("skip", ""):
                 return
             if pick.isdigit() and 1 <= int(pick) <= len(choices):
-                new_model, prov = choices[int(pick) - 1]
+                new_model, prov_name = choices[int(pick) - 1]
                 self.model = new_model
                 self.multi_models = []
-                if prov == "claude":
+                if prov_name == "claude":
                     self._stop_ollama()
-                    provider = "[yellow]Claude API[/]"
-                elif prov == "qwen":
-                    self._stop_ollama()
-                    provider = "[blue]Qwen API[/]"
-                else:
-                    provider = "[green]Local[/]"
+                    provider_str = "[yellow]Claude API[/]"
+                elif prov_name == "local":
+                    provider_str = "[green]Local[/]"
                     self._ensure_ollama()
-                self.console.print(f"Switched to [cyan]{self.model}[/] ({provider})")
+                else:
+                    self._stop_ollama()
+                    prov = OPENAI_COMPAT_PROVIDERS[prov_name]
+                    provider_str = f"[{prov['color']}]{prov['label']} API[/]"
+                self.console.print(f"Switched to [cyan]{self.model}[/] ({provider_str})")
             else:
                 self.console.print(f"[dim]Invalid choice.[/]")
 
@@ -1735,8 +1793,8 @@ class Kodiqa:
                     "Summarize this conversation concisely, keeping all key facts, decisions, code, and file paths discussed.",
                     self.history + [{"role": "user", "content": "Summarize our conversation keeping all important details."}],
                 )
-            elif is_qwen_api_model(self.model):
-                text = self._qwen_nostream(
+            elif self._get_provider_for_model(self.model):
+                text = self._openai_compat_nostream(
                     "Summarize this conversation concisely, keeping all key facts, decisions, code, and file paths discussed.",
                     self.history + [{"role": "user", "content": "Summarize our conversation keeping all important details."}],
                 )
@@ -1776,10 +1834,12 @@ class Kodiqa:
         """Get context window limit for current model."""
         if is_claude_model(self.model):
             return 200_000
-        elif is_qwen_api_model(self.model):
-            return 1_000_000
-        else:
-            return self.config.get("auto_compact_threshold", 80000) * 2  # rough Ollama limit
+        provider = self._get_provider_for_model(self.model)
+        if provider:
+            # Provider-specific limits
+            limits = {"qwen": 1_000_000, "openai": 128_000, "deepseek": 64_000, "groq": 32_768, "mistral": 128_000}
+            return limits.get(provider, 128_000)
+        return self.config.get("auto_compact_threshold", 80000) * 2  # rough Ollama limit
 
     def _auto_compact_if_needed(self):
         """Auto-compact when context approaches provider limit. Warn at 70%, compact at 85%."""
@@ -1847,20 +1907,17 @@ class Kodiqa:
             self._chat_multi(user_msg)
         elif is_claude_model(self.model) or self._is_live_claude(self.model):
             self._chat_claude(user_msg)
-        elif is_qwen_api_model(self.model) or self._is_live_qwen(self.model):
-            self._chat_qwen(user_msg)
         else:
-            self._chat_ollama(user_msg)
+            provider = self._get_provider_for_model(self.model)
+            if provider:
+                self._chat_openai_compat(user_msg, provider)
+            else:
+                self._chat_ollama(user_msg)
 
     def _is_live_claude(self, model_name):
         """Check if model is in cached live Claude model list."""
         cached = getattr(self, "_cached_api_models", None)
         return cached is not None and model_name in cached.get("claude", [])
-
-    def _is_live_qwen(self, model_name):
-        """Check if model is in cached live Qwen model list."""
-        cached = getattr(self, "_cached_api_models", None)
-        return cached is not None and model_name in cached.get("qwen", [])
 
     def _review_edit_queue(self):
         """Show batch edit review panel — cycle through queued edits, accept/reject each."""
@@ -2030,10 +2087,12 @@ class Kodiqa:
                 try:
                     if is_claude_model(model_name):
                         results[model_name] = self._multi_query_claude(model_name, user_msg, memories_ctx, context_file_ctx)
-                    elif is_qwen_api_model(model_name):
-                        results[model_name] = self._multi_query_qwen(model_name, user_msg, memories_ctx, context_file_ctx)
                     else:
-                        results[model_name] = self._multi_query_ollama(model_name, user_msg, memories_ctx, context_file_ctx)
+                        prov = self._get_provider_for_model(model_name)
+                        if prov:
+                            results[model_name] = self._multi_query_openai_compat(prov, model_name, user_msg, memories_ctx, context_file_ctx)
+                        else:
+                            results[model_name] = self._multi_query_ollama(model_name, user_msg, memories_ctx, context_file_ctx)
                 except Exception as e:
                     results[model_name] = f"Error: {e}"
 
@@ -2041,10 +2100,12 @@ class Kodiqa:
             response = results[model_name]
             if is_claude_model(model_name):
                 color = "yellow"
-            elif is_qwen_api_model(model_name):
-                color = "blue"
             else:
-                color = "green"
+                prov = self._get_provider_for_model(model_name)
+                if prov:
+                    color = OPENAI_COMPAT_PROVIDERS[prov]["color"]
+                else:
+                    color = "green"
             self.console.print(Panel(
                 response,
                 title=f"[bold {color}]{model_name}[/]",
@@ -2183,10 +2244,9 @@ class Kodiqa:
             if not any(m.startswith(self.model.split(":")[0]) for m in installed):
                 self.console.print(f"[red]Model [cyan]{self.model}[/red][red] is not installed.[/]")
                 self.console.print(f"  • Pull it: [bold]ollama pull {self.model}[/]")
-                if self.claude_key:
-                    self.console.print(f"  • Or switch: [bold]/model claude[/]")
-                elif self.qwen_key:
-                    self.console.print(f"  • Or switch: [bold]/model qwen3.5[/]")
+                has_any_key = self.claude_key or any(self.api_keys.get(p, "") for p in OPENAI_COMPAT_PROVIDERS)
+                if has_any_key:
+                    self.console.print(f"  • Or switch: [bold]/model[/] to pick a cloud model")
                 else:
                     self.console.print(f"  • Or add API key: [bold]/key[/]")
                 return
@@ -2440,8 +2500,7 @@ class Kodiqa:
             if _logger:
                 _logger.error(f"Claude API failed: {e}")
             self.console.print(f"[red]Claude error: {e}[/]")
-            if self.qwen_key:
-                self.console.print("[yellow]Try /model qwen-api to switch providers.[/]")
+            self.console.print("[yellow]Try /model to switch providers.[/]")
             return None
 
         # Parse streaming response
@@ -2627,8 +2686,8 @@ class Kodiqa:
         tools.extend(self.mcp.get_all_tools())
         return tools
 
-    def _get_qwen_tools(self):
-        """Convert Claude tool schemas to OpenAI function-calling format for Qwen."""
+    def _get_openai_tools(self):
+        """Convert Claude tool schemas to OpenAI function-calling format."""
         tools = []
         for t in self._get_all_tools():
             tools.append({
@@ -2641,7 +2700,19 @@ class Kodiqa:
             })
         return tools
 
-    def _chat_qwen(self, user_msg):
+    def _get_provider_for_model(self, model_name):
+        """Return provider name for a model, checking aliases + live cache."""
+        prov = get_openai_provider(model_name)
+        if prov:
+            return prov
+        cached = getattr(self, "_cached_api_models", {})
+        for prov_name in OPENAI_COMPAT_PROVIDERS:
+            if model_name in cached.get(prov_name, []):
+                return prov_name
+        return None
+
+    def _chat_openai_compat(self, user_msg, provider):
+        """Generic OpenAI-compatible chat loop (used by Qwen, OpenAI, DeepSeek, Groq, Mistral)."""
         self.history.append({"role": "user", "content": user_msg})
 
         while True:
@@ -2657,9 +2728,9 @@ class Kodiqa:
             if env_ctx:
                 system_prompt += "\n\n" + env_ctx
 
-            messages = self._build_qwen_messages(system_prompt)
+            messages = self._build_openai_messages(system_prompt)
 
-            response = self._call_qwen_stream(messages)
+            response = self._call_openai_compat_stream(messages, provider)
             if response is None:
                 return
 
@@ -2737,8 +2808,8 @@ class Kodiqa:
                 })
             self._save_session()
 
-    def _build_qwen_messages(self, system_prompt):
-        """Convert history to OpenAI message format for Qwen API."""
+    def _build_openai_messages(self, system_prompt):
+        """Convert history to OpenAI message format for OpenAI-compatible APIs."""
         messages = [{"role": "system", "content": system_prompt}]
         for msg in self.history:
             role = msg.get("role")
@@ -2773,24 +2844,26 @@ class Kodiqa:
                 messages.append({"role": "user", "content": content})
         return messages
 
-    def _call_qwen_stream(self, messages):
-        """Stream Qwen API with OpenAI-compatible tool calling, retry, and token tracking."""
-        if not self.qwen_key:
-            self.console.print("[red]No Qwen API key. Use /key qwen to add one.[/]")
+    def _call_openai_compat_stream(self, messages, provider):
+        """Stream OpenAI-compatible API with tool calling, retry, and token tracking."""
+        prov = OPENAI_COMPAT_PROVIDERS[provider]
+        key = self.api_keys.get(provider, "")
+        if not key:
+            self.console.print(f"[red]No {prov['label']} API key. Use /key {provider} to add one.[/]")
             return None
 
         try:
             resp = _retry_api_call(
                 lambda: requests.post(
-                    QWEN_API_URL,
+                    prov["url"],
                     headers={
-                        "Authorization": f"Bearer {self.qwen_key}",
+                        "Authorization": f"Bearer {key}",
                         "Content-Type": "application/json",
                     },
                     json={
                         "model": self.model,
                         "messages": messages,
-                        "tools": self._get_qwen_tools(),
+                        "tools": self._get_openai_tools(),
                         "max_tokens": 8192,
                         "stream": True,
                         "stream_options": {"include_usage": True},
@@ -2798,20 +2871,18 @@ class Kodiqa:
                     stream=True,
                     timeout=300,
                 ),
-                provider_name="Qwen",
+                provider_name=prov["label"],
             )
             if resp.status_code == 401:
-                self.console.print("[red]Invalid Qwen API key. Use /key qwen to update it.[/]")
+                self.console.print(f"[red]Invalid {prov['label']} API key. Use /key {provider} to update it.[/]")
                 return None
             if resp.status_code >= 400:
-                self.console.print(f"[red]Qwen API error {resp.status_code}: {resp.text[:200]}[/]")
+                self.console.print(f"[red]{prov['label']} API error {resp.status_code}: {resp.text[:200]}[/]")
                 return None
         except Exception as e:
             if _logger:
-                _logger.error(f"Qwen API failed: {e}")
-            self.console.print(f"[red]Qwen error: {e}[/]")
-            if self.claude_key:
-                self.console.print("[yellow]Try /model claude to switch providers.[/]")
+                _logger.error(f"{prov['label']} API failed: {e}")
+            self.console.print(f"[red]{prov['label']} error: {e}[/]")
             return None
 
         # Parse SSE streaming response (OpenAI format)
@@ -2905,18 +2976,20 @@ class Kodiqa:
 
         return {"text": "".join(full_text), "tool_calls": parsed_tools}
 
-    def _multi_query_qwen(self, model_name, user_msg, memories_ctx, context_file_ctx):
-        """Non-streaming Qwen API query for multi-model mode."""
-        if not self.qwen_key:
-            return "No API key"
+    def _multi_query_openai_compat(self, provider, model_name, user_msg, memories_ctx, context_file_ctx):
+        """Non-streaming OpenAI-compatible API query for multi-model mode."""
+        prov = OPENAI_COMPAT_PROVIDERS[provider]
+        key = self.api_keys.get(provider, "")
+        if not key:
+            return f"No {prov['label']} API key"
         system_prompt = CLAUDE_SYSTEM.format(cwd=self.cwd, model=model_name, memories=memories_ctx)
         if context_file_ctx:
             system_prompt += "\n\n" + context_file_ctx
         try:
             resp = requests.post(
-                QWEN_API_URL,
+                prov["url"],
                 headers={
-                    "Authorization": f"Bearer {self.qwen_key}",
+                    "Authorization": f"Bearer {key}",
                     "Content-Type": "application/json",
                 },
                 json={
@@ -2934,22 +3007,28 @@ class Kodiqa:
         except Exception as e:
             return f"Error: {e}"
 
-    def _qwen_nostream(self, system, messages):
-        """Non-streaming Qwen call (for compact)."""
-        if not self.qwen_key:
+    def _openai_compat_nostream(self, system, messages, provider=None):
+        """Non-streaming OpenAI-compatible call (for compact/summary)."""
+        if provider is None:
+            provider = self._get_provider_for_model(self.model)
+        if not provider:
             return ""
-        qwen_msgs = [{"role": "system", "content": system}]
+        prov = OPENAI_COMPAT_PROVIDERS[provider]
+        key = self.api_keys.get(provider, "")
+        if not key:
+            return ""
+        oai_msgs = [{"role": "system", "content": system}]
         for m in messages:
             if isinstance(m.get("content"), str):
-                qwen_msgs.append({"role": m["role"], "content": m["content"]})
+                oai_msgs.append({"role": m["role"], "content": m["content"]})
         try:
             resp = requests.post(
-                QWEN_API_URL,
+                prov["url"],
                 headers={
-                    "Authorization": f"Bearer {self.qwen_key}",
+                    "Authorization": f"Bearer {key}",
                     "Content-Type": "application/json",
                 },
-                json={"model": self.model, "max_tokens": 4096, "messages": qwen_msgs},
+                json={"model": self.model, "max_tokens": 4096, "messages": oai_msgs},
                 timeout=120,
             )
             resp.raise_for_status()
@@ -2972,10 +3051,9 @@ class Kodiqa:
             resp.raise_for_status()
         except requests.ConnectionError:
             self.console.print("[red]Can't connect to Ollama. Is it running?[/]")
-            if self.claude_key:
-                self.console.print("[yellow]Try /model claude to use Claude API instead.[/]")
-            elif self.qwen_key:
-                self.console.print("[yellow]Try /model qwen-api to use Qwen API instead.[/]")
+            has_any_key = self.claude_key or any(self.api_keys.get(p, "") for p in OPENAI_COMPAT_PROVIDERS)
+            if has_any_key:
+                self.console.print("[yellow]Try /model to switch to a cloud provider.[/]")
             return None
         except Exception as e:
             if _logger:

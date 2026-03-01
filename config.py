@@ -13,7 +13,7 @@ MODEL_ALIASES = {
     "qwen": "qwen3:14b",
     "coder": "qwen3-coder",
     "reason": "phi4-reasoning",
-    "gpt": "gpt-oss",
+    "gpt-local": "gpt-oss",
 }
 
 # Claude API models
@@ -63,6 +63,76 @@ QWEN_ALIASES = {
 }
 
 QWEN_API_URL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions"
+
+# All OpenAI-compatible API providers (shared streaming/tool-calling implementation)
+OPENAI_COMPAT_PROVIDERS = {
+    "openai": {
+        "url": "https://api.openai.com/v1/chat/completions",
+        "models_url": "https://api.openai.com/v1/models",
+        "key_setting": "openai_api_key",
+        "key_prefix": "sk-",
+        "color": "white",
+        "label": "OpenAI",
+        "aliases": {
+            "gpt": "gpt-4o",
+            "gpt4": "gpt-4o",
+            "gpt-mini": "gpt-4o-mini",
+            "o3": "o3",
+            "o3-mini": "o3-mini",
+            "o4-mini": "o4-mini",
+        },
+    },
+    "deepseek": {
+        "url": "https://api.deepseek.com/v1/chat/completions",
+        "models_url": "https://api.deepseek.com/v1/models",
+        "key_setting": "deepseek_api_key",
+        "key_prefix": "sk-",
+        "color": "cyan",
+        "label": "DeepSeek",
+        "aliases": {
+            "deepseek": "deepseek-chat",
+            "deepseek-v3": "deepseek-chat",
+            "deepseek-r1": "deepseek-reasoner",
+        },
+    },
+    "groq": {
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "models_url": "https://api.groq.com/openai/v1/models",
+        "key_setting": "groq_api_key",
+        "key_prefix": "gsk_",
+        "color": "red",
+        "label": "Groq",
+        "aliases": {
+            "llama": "llama-3.3-70b-versatile",
+            "llama-small": "llama-3.1-8b-instant",
+            "gemma": "gemma2-9b-it",
+            "mixtral": "mixtral-8x7b-32768",
+        },
+    },
+    "mistral": {
+        "url": "https://api.mistral.ai/v1/chat/completions",
+        "models_url": "https://api.mistral.ai/v1/models",
+        "key_setting": "mistral_api_key",
+        "key_prefix": "",
+        "color": "magenta",
+        "label": "Mistral",
+        "aliases": {
+            "mistral": "mistral-large-latest",
+            "mistral-large": "mistral-large-latest",
+            "mistral-small": "mistral-small-latest",
+            "codestral": "codestral-latest",
+        },
+    },
+    "qwen": {
+        "url": QWEN_API_URL,
+        "models_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/models",
+        "key_setting": "qwen_api_key",
+        "key_prefix": "sk-",
+        "color": "blue",
+        "label": "Qwen",
+        "aliases": QWEN_ALIASES,
+    },
+}
 
 KODIQA_DIR = os.path.expanduser("~/.kodiqa")
 MEMORY_DB = os.path.join(KODIQA_DIR, "memory.db")
@@ -177,22 +247,22 @@ def is_claude_model(model_name):
     return model_name.startswith("claude-") or model_name in CLAUDE_ALIASES
 
 
+def get_openai_provider(model_name):
+    """Return provider name (openai/deepseek/groq/mistral/qwen) if model belongs to an OpenAI-compat provider, else None."""
+    for prov_name, prov in OPENAI_COMPAT_PROVIDERS.items():
+        if model_name in prov["aliases"] or model_name in prov["aliases"].values():
+            return prov_name
+    return None
+
+
+def is_openai_compat_model(model_name):
+    """Check if model is any OpenAI-compatible API model."""
+    return get_openai_provider(model_name) is not None
+
+
 def is_qwen_api_model(model_name):
-    """Check if a model name is a Qwen API model (not local Ollama Qwen)."""
-    if model_name in QWEN_ALIASES or model_name in QWEN_ALIASES.values():
-        return True
-    # Local Ollama models have colons (e.g. qwen3-coder:latest) or are in MODEL_ALIASES
-    if ":" in model_name or model_name in MODEL_ALIASES or model_name in MODEL_ALIASES.values():
-        return False
-    # API model names: contain version dates or API-specific suffixes
-    api_markers = ("-plus", "-flash", "-turbo", "-latest", "-max", "-long", "-math")
-    if any(m in model_name for m in api_markers):
-        return True
-    # Date-stamped models (e.g. qwen3-max-2025-09-23)
-    import re
-    if re.search(r"\d{4}-\d{2}-\d{2}", model_name):
-        return True
-    return False
+    """Check if a model name is a Qwen API model (backward compat)."""
+    return get_openai_provider(model_name) == "qwen"
 
 
 SYSTEM_PROMPT = """You are Kodiqa, a powerful AI coding assistant. You help users with software engineering, research, and general tasks.

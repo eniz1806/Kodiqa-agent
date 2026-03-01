@@ -116,15 +116,15 @@ class TestContextLimit:
         # Claude models get 200K limit
 
     def test_qwen_model_limit(self):
-        from config import is_qwen_api_model
-        assert is_qwen_api_model("qwen-max")
+        from config import get_openai_provider
+        assert get_openai_provider("qwen-max") == "qwen"
         # Qwen models get 1M limit
 
     def test_ollama_default_limit(self):
-        from config import is_claude_model, is_qwen_api_model
-        # Local model is neither Claude nor Qwen
+        from config import is_claude_model, get_openai_provider
+        # Local model is neither Claude nor any API provider
         assert not is_claude_model("qwen2.5-coder:7b")
-        assert not is_qwen_api_model("qwen2.5-coder:7b")
+        assert get_openai_provider("qwen2.5-coder:7b") is None
 
 
 class TestBranching:
