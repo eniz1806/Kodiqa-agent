@@ -1008,6 +1008,7 @@ class Kodiqa:
                 provider = "[blue]Qwen API[/]"
             else:
                 provider = "[green]Local[/]"
+                self._check_updates()
             self.console.print(f"Switched to [cyan]{self.model}[/] ({provider}) [dim](single mode)[/]")
             self.console.print("[dim]Use /multi all to go back to multi-model mode[/]")
         elif command == "/multi":
@@ -1450,6 +1451,7 @@ class Kodiqa:
                     provider = "[blue]Qwen API[/]"
                 else:
                     provider = "[green]Local[/]"
+                    self._check_updates()
                 self.console.print(f"Switched to [cyan]{self.model}[/] ({provider})")
             else:
                 self.console.print(f"[dim]Invalid choice.[/]")
