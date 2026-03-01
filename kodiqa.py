@@ -706,14 +706,7 @@ class Kodiqa:
         self._save_session()
         self.memory.close()
         self.mcp.stop_all()
-        # Only stop Ollama if we started it
-        if self._ollama_started_by_us:
-            import subprocess
-            try:
-                subprocess.run(["pkill", "-f", "ollama"], capture_output=True, timeout=5)
-                self.console.print("\n[green]●[/] Ollama stopped")
-            except Exception:
-                pass
+        self._stop_ollama()
         self.console.print("[dim]Goodbye! Session saved.[/]")
 
     def _ensure_ollama(self):
@@ -747,6 +740,18 @@ class Kodiqa:
             pass
         self.console.print("[yellow]●[/] Could not start Ollama [dim](start manually: ollama serve)[/]")
         return False
+
+    def _stop_ollama(self):
+        """Stop Ollama if we started it."""
+        if not self._ollama_started_by_us:
+            return
+        import subprocess
+        try:
+            subprocess.run(["pkill", "-f", "ollama"], capture_output=True, timeout=5)
+            self.console.print("[green]●[/] Ollama stopped")
+            self._ollama_started_by_us = False
+        except Exception:
+            pass
 
     def _check_updates(self):
         """Check for model updates and new models on startup."""
@@ -997,6 +1002,8 @@ class Kodiqa:
                 new_model = arg
             self.model = new_model
             self.multi_models = []  # switch to single mode
+            if is_claude_model(self.model) or is_qwen_api_model(self.model):
+                self._stop_ollama()  # don't need Ollama for cloud models
             if is_claude_model(self.model):
                 provider = "[yellow]Claude API[/]"
             elif is_qwen_api_model(self.model):
@@ -1437,6 +1444,8 @@ class Kodiqa:
                 new_model = choices[int(pick) - 1]
                 self.model = new_model
                 self.multi_models = []
+                if is_claude_model(self.model) or is_qwen_api_model(self.model):
+                    self._stop_ollama()  # don't need Ollama for cloud models
                 if is_claude_model(self.model):
                     provider = "[yellow]Claude API[/]"
                 elif is_qwen_api_model(self.model):
