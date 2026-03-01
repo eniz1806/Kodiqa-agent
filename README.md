@@ -309,8 +309,8 @@ find any bugs in this code
 
 ```
 ~/LLMS/kodiqa/
-  kodiqa.py          # Main agent (~3000 lines)
-  actions.py         # 26 action handlers (~940 lines)
+  kodiqa.py          # Main agent (~3135 lines)
+  actions.py         # 26 action handlers (~950 lines)
   tools.py           # Tool schemas (~460 lines)
   config.py          # Config, aliases, system prompt (~335 lines)
   web.py             # Web search + page fetch (~195 lines)
@@ -326,7 +326,7 @@ find any bugs in this code
   settings.json      # API keys, default model
   memory.db          # Persistent memories
   session.json       # Auto-saved conversation
-  input_history      # prompt_toolkit history
+  input_history      # prompt_toolkit FileHistory
   error.log          # Error log (capped 1MB)
   KODIQA.md          # Global context (always in system prompt)
   projects/          # Per-project context files
