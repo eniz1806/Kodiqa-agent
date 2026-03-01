@@ -111,6 +111,28 @@ DEFAULTS = {
 }
 
 
+def load_kodiqaignore(cwd):
+    """Read .kodiqaignore from cwd, return (extra_dirs, extra_extensions) to skip."""
+    ignore_file = os.path.join(cwd, ".kodiqaignore")
+    extra_dirs = set()
+    extra_exts = set()
+    if not os.path.isfile(ignore_file):
+        return extra_dirs, extra_exts
+    try:
+        with open(ignore_file, "r") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if line.startswith("*."):
+                    extra_exts.add("." + line[2:])  # *.log -> .log
+                else:
+                    extra_dirs.add(line.rstrip("/"))
+    except Exception:
+        pass
+    return extra_dirs, extra_exts
+
+
 def load_config():
     """Load user config from ~/.kodiqa/config.json, merged with defaults."""
     config = dict(DEFAULTS)

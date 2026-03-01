@@ -50,6 +50,10 @@ kodiqa
 - **Dynamic model library** — fetches available Ollama models from ollama.com with pull counts
 - **Unlimited iterations** — no artificial cap, AI keeps working until the task is done
 - **Live API model routing** — auto-discovered models from Claude/Qwen APIs routed to correct provider
+- **Auto git commit** — toggle with `/autocommit`, auto-commits after AI edits with descriptive message
+- **`.kodiqaignore`** — per-project file exclusion (like `.gitignore` for scans/searches)
+- **Budget limit** — `/budget 5` sets $5 session limit, warns at 80%, blocks at 100%
+- **Auto-lint** — `/lint ruff check --fix` runs linter after edits, feeds errors back to AI
 - **156 tests** — pytest test suite, all passing
 
 ## Arrow-Key UI
@@ -100,6 +104,11 @@ Prompt uses a separator line (like Claude Code):
 | `/cd <path>` | Change working directory |
 | `/branch` | Save/switch/list conversation branches |
 | `/mcp` | Manage MCP tool servers (add/remove/list) |
+| `/autocommit` | Toggle auto git commit after AI edits |
+| `/budget <amount>` | Set session budget limit (warns 80%, blocks 100%) |
+| `/undo [path]` | Undo last edit / list undo history |
+| `/diff [args]` | Show git diff (supports --staged etc.) |
+| `/lint <cmd>` | Auto-lint after edits (`/lint off` to disable) |
 | `/help` | Show help |
 | `/quit` | Exit |
 
@@ -313,10 +322,10 @@ find any bugs in this code
 
 ```
 ~/LLMS/kodiqa/
-  kodiqa.py          # Main agent (~3285 lines)
+  kodiqa.py          # Main agent (~3430 lines)
   actions.py         # 26 action handlers (~950 lines)
   tools.py           # Tool schemas (~460 lines)
-  config.py          # Config, aliases, system prompt (~335 lines)
+  config.py          # Config, aliases, system prompt (~355 lines)
   web.py             # Web search + page fetch (~195 lines)
   memory.py          # SQLite persistent memory (82 lines)
   mcp.py             # MCP client (~175 lines)

@@ -6,10 +6,10 @@ A Claude Code clone that runs 100% locally using free Ollama models, with option
 ## Architecture
 
 ```
-kodiqa.py  (~3285 lines)  Main agent: Kodiqa class, StreamWriter, KodiqaCompleter, prompt_toolkit UI, chat loops, slash commands, modes, MCP, branching, auto-discovery, workspace boundary
+kodiqa.py  (~3430 lines)  Main agent: Kodiqa class, StreamWriter, KodiqaCompleter, prompt_toolkit UI, chat loops, slash commands, modes, MCP, branching, auto-discovery, workspace boundary, auto-commit, budget, lint
 actions.py (~950 lines)   26 action handlers: file ops, git, search, web, memory, clipboard, multi_edit, edit queue + diff preview
 tools.py   (~460 lines)   Tool schemas (Claude native format, converted to OpenAI format for Qwen)
-config.py  (~335 lines)   Constants, model aliases (all Claude 4.6/4.5/4 + Qwen 3.5/3), system prompt, config
+config.py  (~355 lines)   Constants, model aliases (all Claude 4.6/4.5/4 + Qwen 3.5/3), system prompt, config, .kodiqaignore
 web.py     (~195 lines)   3 search engines (DuckDuckGo, Google scrape, Google API) + page fetcher
 memory.py  (82 lines)     SQLite-backed persistent memory store
 mcp.py     (~175 lines)   MCP client: MCPServer (stdio JSON-RPC transport) + MCPManager (multi-server)
@@ -111,7 +111,7 @@ tests/           156 tests, all passing (~0.25s)
 - `bin/kodiqa` — shell script that runs venv Python directly
 - `pyproject.toml` — pip-installable package with `kodiqa` entry point
 - Install: `pip install .` or `pip install -e .` (editable)
-- Current version: v1.5.0
+- Current version: v1.6.0
 
 ## Key Patterns
 
@@ -209,7 +209,7 @@ tests/           156 tests, all passing (~0.25s)
 - `~/.kodiqa/exports/` — exported session markdown files
 - `~/.kodiqa/error.log` — error log
 
-### Slash Commands (29 total)
+### Slash Commands (34 total)
 | Command | Description |
 |---------|-------------|
 | `/model <name>` | Switch model (interactive picker if no arg) |
@@ -237,6 +237,11 @@ tests/           156 tests, all passing (~0.25s)
 | `/cd <path>` | Change working directory |
 | `/branch` | Save/switch/list conversation branches |
 | `/mcp` | Manage MCP tool servers (add/remove/list) |
+| `/autocommit` | Toggle auto git commit after AI edits |
+| `/budget <amount>` | Set session budget limit (warns 80%, blocks 100%) |
+| `/undo [path]` | Undo last edit / list undo history |
+| `/diff [args]` | Show git diff (supports --staged etc.) |
+| `/lint <cmd>` | Set auto-lint command after edits (/lint off to disable) |
 | `/help` | Show help |
 | `/quit` | Exit |
 
@@ -256,7 +261,7 @@ source ~/LLMS/kodiqa/venv/bin/activate && pytest -v
 - Python 3.9+, rich, beautifulsoup4, requests, prompt_toolkit, pytest (dev)
 - Ollama installed at `/Applications/Ollama.app`
 - Virtual environment at `./venv/`
-- Current version: v1.5.0
+- Current version: v1.6.0
 
 ### Adding a New Tool
 1. Add the handler function `do_<name>()` in `actions.py`

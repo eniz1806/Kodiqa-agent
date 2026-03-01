@@ -28,13 +28,14 @@ from config import (
     CLAUDE_API_URL, QWEN_ALIASES, QWEN_API_URL, CONTEXT_FILE, KODIQA_DIR,
     CONFIG_FILE, SYSTEM_PROMPT, SKIP_DIRS, SKIP_EXTENSIONS,
     MAX_FILE_SIZE, DEFAULTS,
-    load_settings, save_settings, load_config, save_default_config,
+    load_settings, save_settings, load_config, save_default_config, load_kodiqaignore,
     is_claude_model, is_qwen_api_model,
 )
 from memory import MemoryStore
 from actions import (
     parse_actions, execute_action, execute_tool_call, execute_tools_parallel, set_console,
     set_batch_mode, get_edit_queue, clear_edit_queue, apply_queued_edit, reject_queued_edit,
+    do_undo_edit, _undo_buffer,
 )
 from web import set_search_engine, get_search_engine, set_google_api_keys, get_google_api_keys
 from tools import CLAUDE_TOOLS
@@ -429,6 +430,15 @@ class Kodiqa:
         self._branches = {}  # {name: {"history": [...], "model": ...}}
         # MCP server manager
         self.mcp = MCPManager()
+        # Auto git commit after AI edits
+        self.auto_commit = self.settings.get("auto_commit", False)
+        # Budget limit (0 = no limit)
+        self.budget_limit = 0
+        self._budget_exceeded = False
+        # Auto-lint command after edits
+        self.lint_cmd = ""
+        # Load .kodiqaignore
+        self._load_kodiqaignore()
 
     # ── Tab Completion ──
 
@@ -436,7 +446,9 @@ class Kodiqa:
         "/model", "/models", "/multi", "/single", "/scan", "/clear", "/compact",
         "/memories", "/forget", "/context", "/key", "/tokens", "/config",
         "/export", "/checkpoint", "/restore", "/env", "/verbose", "/mode",
-        "/plan", "/accept", "/search", "/cd", "/branch", "/mcp", "/help", "/quit",
+        "/plan", "/accept", "/search", "/cd", "/branch", "/mcp",
+        "/autocommit", "/budget", "/undo", "/diff", "/lint",
+        "/help", "/quit",
     ]
 
 
@@ -1216,6 +1228,7 @@ class Kodiqa:
                 self.cwd = os.path.abspath(path)
                 os.chdir(self.cwd)
                 self._detect_git()
+                self._load_kodiqaignore()
                 git_note = ""
                 if self.git_info:
                     git_note = f" (git: {self.git_info['branch']})"
@@ -1363,6 +1376,71 @@ class Kodiqa:
             self._handle_branch(arg.strip())
         elif command == "/mcp":
             self._handle_mcp(arg.strip())
+        elif command == "/autocommit":
+            self.auto_commit = not self.auto_commit
+            self.settings["auto_commit"] = self.auto_commit
+            save_settings(self.settings)
+            if self.auto_commit:
+                self.console.print("[green]Auto-commit ON[/] — git commit after each AI edit")
+            else:
+                self.console.print("[yellow]Auto-commit OFF[/]")
+        elif command == "/budget":
+            if arg:
+                try:
+                    self.budget_limit = float(arg)
+                    self._budget_exceeded = False
+                    self.console.print(f"[green]Budget set to ${self.budget_limit:.2f}[/]")
+                except ValueError:
+                    self.console.print("[red]Usage: /budget <amount> (e.g. /budget 5)[/]")
+            else:
+                spent = self.session_tokens["cost"]
+                if self.budget_limit > 0:
+                    pct = (spent / self.budget_limit) * 100
+                    bar_w = 20
+                    filled = int(bar_w * min(pct, 100) / 100)
+                    bar = "█" * filled + "░" * (bar_w - filled)
+                    color = "green" if pct < 80 else ("yellow" if pct < 100 else "red")
+                    self.console.print(f"Budget: [{color}]{bar}[/] ${spent:.4f} / ${self.budget_limit:.2f} ({pct:.0f}%)")
+                else:
+                    self.console.print(f"Session cost: ${spent:.4f} [dim](no budget set — /budget <amount>)[/]")
+        elif command == "/undo":
+            if arg:
+                path = os.path.abspath(os.path.expanduser(arg))
+                result = do_undo_edit(path)
+                self.console.print(result)
+            else:
+                files_with_undo = [(p, len(buf)) for p, buf in _undo_buffer.items() if buf]
+                if files_with_undo:
+                    self.console.print("[bold]Files with undo history:[/]")
+                    for p, count in files_with_undo:
+                        rel = os.path.relpath(p, self.cwd) if p.startswith(self.cwd) else p
+                        self.console.print(f"  [cyan]{rel}[/] [dim]({count} undo steps)[/]")
+                    self.console.print("[dim]Usage: /undo <path>[/]")
+                else:
+                    self.console.print("[dim]No undo history yet.[/]")
+        elif command == "/diff":
+            try:
+                cmd = ["git", "diff"] + (arg.split() if arg else [])
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+                output = result.stdout.strip()
+                if output:
+                    self.console.print(Panel(output, title="git diff", border_style="cyan"))
+                else:
+                    self.console.print("[dim]No uncommitted changes.[/]")
+            except Exception as e:
+                self.console.print(f"[red]Error: {e}[/]")
+        elif command == "/lint":
+            if not arg:
+                if self.lint_cmd:
+                    self.console.print(f"Lint command: [cyan]{self.lint_cmd}[/]")
+                else:
+                    self.console.print("[dim]No lint command set. Usage: /lint <command>[/]")
+            elif arg.strip().lower() == "off":
+                self.lint_cmd = ""
+                self.console.print("[yellow]Auto-lint OFF[/]")
+            else:
+                self.lint_cmd = arg.strip()
+                self.console.print(f"[green]Auto-lint ON[/] — running [cyan]{self.lint_cmd}[/] after edits")
         else:
             self.console.print(f"[red]Unknown command: {command}. Type /help[/]")
 
@@ -1761,6 +1839,10 @@ class Kodiqa:
 
     def _dispatch_chat(self, user_msg):
         """Route to the correct provider chat method."""
+        if self._budget_exceeded:
+            self.console.print(f"[red]Budget exceeded (${self.session_tokens['cost']:.4f} / ${self.budget_limit:.2f}).[/]")
+            self.console.print("[dim]Use /budget <amount> to increase, or start a new session.[/]")
+            return
         if self.multi_models:
             self._chat_multi(user_msg)
         elif is_claude_model(self.model) or self._is_live_claude(self.model):
@@ -2156,6 +2238,10 @@ class Kodiqa:
                 for rr in review_results:
                     results.append(f"[Edit Review]\n{rr}")
             set_batch_mode(False)
+            self._auto_commit_if_enabled()
+            lint_errors = self._run_lint_if_enabled()
+            if lint_errors:
+                results.append(f"[Lint Errors]\n{lint_errors}")
             self.history.append({"role": "user", "content": f"[Action Results]\n" + "\n\n".join(results)})
 
     # ── Claude chat (native tool_use API) ──
@@ -2246,6 +2332,10 @@ class Kodiqa:
                 for rr in review_results:
                     results_list.append(("review", rr))
             set_batch_mode(False)
+            self._auto_commit_if_enabled()
+            lint_errors = self._run_lint_if_enabled()
+            if lint_errors:
+                results_list.append(("lint", lint_errors))
 
             # Build tool results - handle images specially for Claude vision
             tool_results = []
@@ -2633,6 +2723,10 @@ class Kodiqa:
                 for rr in review_results:
                     results_list.append(("review", rr))
             set_batch_mode(False)
+            self._auto_commit_if_enabled()
+            lint_errors = self._run_lint_if_enabled()
+            if lint_errors:
+                results_list.append(("lint", lint_errors))
 
             # Add tool results as separate messages (OpenAI format)
             for tc_id, result in results_list:
@@ -2961,6 +3055,14 @@ class Kodiqa:
         if cost > 0:
             parts.append(f"[dim](${cost:.4f} / session: ${self.session_tokens['cost']:.4f})[/]")
         self.console.print("  " + " | ".join(parts))
+        # Budget warnings
+        if self.budget_limit > 0:
+            pct = (self.session_tokens["cost"] / self.budget_limit) * 100
+            if pct >= 100 and not self._budget_exceeded:
+                self._budget_exceeded = True
+                self.console.print(f"  [red bold]⚠ Budget exceeded! (${self.session_tokens['cost']:.4f} / ${self.budget_limit:.2f})[/]")
+            elif pct >= 80 and not self._budget_exceeded:
+                self.console.print(f"  [yellow]⚠ {pct:.0f}% of budget used (${self.session_tokens['cost']:.4f} / ${self.budget_limit:.2f})[/]")
 
     def _export_session(self):
         """Export the current conversation to a markdown file."""
@@ -3113,6 +3215,49 @@ class Kodiqa:
                 self.console.print(f"  [red]Server '{name}' not found.[/]")
         else:
             self.console.print("[dim]Usage: /mcp add <name> <command> | /mcp remove <name> | /mcp list[/]")
+
+    def _load_kodiqaignore(self):
+        """Load .kodiqaignore from cwd and merge into skip sets."""
+        extra_dirs, extra_exts = load_kodiqaignore(self.cwd)
+        if extra_dirs:
+            SKIP_DIRS.update(extra_dirs)
+        if extra_exts:
+            SKIP_EXTENSIONS.update(extra_exts)
+
+    def _auto_commit_if_enabled(self):
+        """Auto git commit after AI edits if enabled and in a git repo."""
+        if not self.auto_commit or not self.git_info:
+            return
+        try:
+            result = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True, timeout=10)
+            changed = [l.split()[-1] for l in result.stdout.strip().splitlines() if l.strip()]
+            if not changed:
+                return
+            files_str = ", ".join(changed[:5])
+            if len(changed) > 5:
+                files_str += f" +{len(changed) - 5} more"
+            msg = f"kodiqa: edit {files_str}"
+            subprocess.run(["git", "add", "-A"], capture_output=True, timeout=10)
+            subprocess.run(["git", "commit", "-m", msg], capture_output=True, timeout=10)
+            self.console.print(f"  [green]●[/] [dim]Auto-committed: {msg}[/]")
+        except Exception:
+            pass
+
+    def _run_lint_if_enabled(self):
+        """Run lint command after edits if configured."""
+        if not self.lint_cmd:
+            return None
+        try:
+            result = subprocess.run(self.lint_cmd, shell=True, capture_output=True, text=True, timeout=60)
+            output = (result.stdout + result.stderr).strip()
+            if result.returncode != 0 and output:
+                self.console.print(f"  [yellow]●[/] Lint issues:\n{output[:500]}")
+                return output[:2000]
+            elif output:
+                self.console.print(f"  [green]●[/] [dim]Lint passed[/]")
+        except Exception as e:
+            self.console.print(f"  [red]●[/] Lint error: {e}")
+        return None
 
     @staticmethod
     def _arrow_select(options, console, default=0):
