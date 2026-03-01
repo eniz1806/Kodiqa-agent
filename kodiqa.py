@@ -725,10 +725,63 @@ class Kodiqa:
 
     def _quit(self):
         self._save_session()
+        self._save_session_summary()
         self.memory.close()
         self.mcp.stop_all()
         self._stop_ollama()
         self.console.print("[dim]Goodbye! Session saved.[/]")
+
+    def _save_session_summary(self):
+        """Auto-save conversation summary to project context file on quit."""
+        # Only save if there was meaningful conversation (at least 2 exchanges)
+        user_msgs = [m for m in self.history if m.get("role") == "user"]
+        if len(user_msgs) < 2:
+            return
+        try:
+            # Generate summary using current model
+            summary_prompt = (
+                "Write a brief session summary (5-10 lines max) of what was discussed and done. "
+                "Include: key decisions, files changed, problems solved, and any pending tasks. "
+                "Format as bullet points. Start with '## Last Session' header."
+            )
+            if is_claude_model(self.model):
+                summary = self._claude_nostream(summary_prompt, self.history)
+            elif is_qwen_api_model(self.model):
+                summary = self._qwen_nostream(summary_prompt, self.history)
+            else:
+                msgs = [{"role": "system", "content": summary_prompt}] + self.history
+                msgs.append({"role": "user", "content": summary_prompt})
+                resp = requests.post(
+                    f"{OLLAMA_URL}/api/chat",
+                    json={"model": self.model, "messages": msgs, "stream": False},
+                    timeout=60,
+                )
+                resp.raise_for_status()
+                summary = resp.json().get("message", {}).get("content", "")
+            if not summary or not summary.strip():
+                return
+            # Save to project context file
+            ctx_path = self._get_project_context_path()
+            os.makedirs(os.path.dirname(ctx_path), exist_ok=True)
+            # Read existing content (preserve manual notes)
+            existing = ""
+            if os.path.isfile(ctx_path):
+                with open(ctx_path, "r") as f:
+                    existing = f.read()
+            # Replace old "Last Session" section if present, or append
+            import re
+            if "## Last Session" in existing:
+                existing = re.sub(
+                    r"## Last Session.*?(?=\n## |\Z)",
+                    "", existing, flags=re.DOTALL
+                ).strip()
+            with open(ctx_path, "w") as f:
+                if existing:
+                    f.write(existing + "\n\n")
+                f.write(summary.strip() + "\n")
+            self.console.print(f"[dim]Session summary saved to {ctx_path}[/]")
+        except Exception:
+            pass  # Don't block quit on summary errors
 
     def _ensure_ollama(self):
         """Make sure Ollama is running, start it if not."""
