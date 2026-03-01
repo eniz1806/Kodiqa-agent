@@ -1,0 +1,14 @@
+#!/bin/bash
+# Kodiqa - run from any directory
+# Install: ln -sf ~/LLMS/kodiqa/bin/kodiqa /usr/local/bin/kodiqa
+
+KODIQA_DIR="$HOME/LLMS/kodiqa"
+VENV_PYTHON="$KODIQA_DIR/venv/bin/python"
+
+if [ ! -f "$VENV_PYTHON" ]; then
+    echo "Error: Kodiqa venv not found at $KODIQA_DIR/venv"
+    echo "Run: cd $KODIQA_DIR && python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt"
+    exit 1
+fi
+
+exec "$VENV_PYTHON" "$KODIQA_DIR/kodiqa.py" "$@"
