@@ -483,7 +483,8 @@ class Kodiqa:
             while True:
                 try:
                     self.console.print()
-                    user_input = input("\033[1;36mYou: \033[0m")
+                    self._print_status_bar()
+                    user_input = input("\033[1;35m❯ \033[0m")
                 except (EOFError, KeyboardInterrupt):
                     self._quit()
                     return
@@ -495,6 +496,23 @@ class Kodiqa:
                     self._chat(user_input)
         except KeyboardInterrupt:
             self._quit()
+
+    def _print_status_bar(self):
+        """Print Claude Code-style status bar below the prompt."""
+        parts = []
+        # Accept edits indicator
+        if self.batch_edits:
+            parts.append("\033[35m❯❯\033[0m \033[2maccept edits on\033[0m")
+        else:
+            parts.append("\033[35m❯❯\033[0m \033[2maccept edits off\033[0m")
+        # Plan mode
+        if self.plan_mode:
+            parts.append("\033[33m⚡ plan mode\033[0m")
+        # Permission mode (only show if not default)
+        if self.permission_mode != "default":
+            mode_icons = {"relaxed": "🔓 relaxed", "auto": "⚡ auto"}
+            parts.append(f"\033[36m{mode_icons.get(self.permission_mode, self.permission_mode)}\033[0m")
+        self.console.print(f"  {'  '.join(parts)} \033[2m(shift+tab to cycle)\033[0m")
 
     def _first_run_setup(self):
         if "setup_done" in self.settings:
@@ -1750,7 +1768,7 @@ class Kodiqa:
                 self._chat("")  # Trigger phase 2
             elif choice == "2":
                 self._pending_plan = None  # Reset to allow re-plan
-                feedback = input("\033[1;36mFeedback: \033[0m")
+                feedback = input("\033[1;35m❯ \033[0m")
                 if feedback.strip():
                     self._chat(f"Revise the plan based on this feedback: {feedback}")
             else:
