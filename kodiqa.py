@@ -2009,6 +2009,22 @@ class Kodiqa:
         if not self._ensure_ollama():
             self.console.print("[red]Cannot chat — Ollama is not running.[/]")
             return
+        # Check if model is installed
+        try:
+            resp = requests.get(f"{OLLAMA_URL}/api/tags", timeout=3)
+            installed = [m["name"] for m in resp.json().get("models", [])]
+            if not any(m.startswith(self.model.split(":")[0]) for m in installed):
+                self.console.print(f"[red]Model [cyan]{self.model}[/red][red] is not installed.[/]")
+                self.console.print(f"  • Pull it: [bold]ollama pull {self.model}[/]")
+                if self.claude_key:
+                    self.console.print(f"  • Or switch: [bold]/model claude[/]")
+                elif self.qwen_key:
+                    self.console.print(f"  • Or switch: [bold]/model qwen3.5[/]")
+                else:
+                    self.console.print(f"  • Or add API key: [bold]/key[/]")
+                return
+        except Exception:
+            pass
         self.history.append({"role": "user", "content": user_msg})
         for iteration in range(MAX_ITERATIONS):
             memories_ctx = self.memory.get_context()
