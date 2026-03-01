@@ -6,7 +6,7 @@ A Claude Code clone that runs 100% locally using free Ollama models, with option
 ## Architecture
 
 ```
-kodiqa.py  (~3150 lines)  Main agent: Kodiqa class, StreamWriter, arrow-key UI, chat loops, slash commands, modes, MCP, branching, auto-discovery, workspace boundary
+kodiqa.py  (~3000 lines)  Main agent: Kodiqa class, StreamWriter, KodiqaCompleter, prompt_toolkit UI, chat loops, slash commands, modes, MCP, branching, auto-discovery, workspace boundary
 actions.py (~940 lines)   26 action handlers: file ops, git, search, web, memory, clipboard, multi_edit, edit queue + diff preview
 tools.py   (~460 lines)   Tool schemas (Claude native format, converted to OpenAI format for Qwen)
 config.py  (~335 lines)   Constants, model aliases (all Claude 4.6/4.5/4 + Qwen 3.5/3), system prompt, config
@@ -79,12 +79,14 @@ tests/           156 tests, all passing (~0.25s)
 - New models appear automatically in `/model` picker and `/models` list
 - Live models shown as "(live)" — usable by full model ID
 
-### Arrow-Key UI (kodiqa.py: `_arrow_select`)
-- Claude Code-style `❯` prompt with status bar showing modes
-- `_arrow_select(options, console, default)` — reusable arrow-key selector using raw terminal input
+### Prompt UI (kodiqa.py: prompt_toolkit + `_arrow_select`)
+- Claude Code-style `❯` prompt with separator line, powered by `prompt_toolkit`
+- `PromptSession` with `FileHistory`, `KodiqaCompleter`, styled prompt
+- `KodiqaCompleter(Completer)` — tab completion for slash commands, model aliases, modes, file paths
+- `_arrow_select(options, console, default)` — reusable arrow-key selector using raw terminal input (tty/termios)
 - Supports ↑↓ arrow keys, j/k vim keys, number shortcuts, Enter to confirm
+- Uses save/restore cursor (`\033[s`/`\033[u`) for in-place redraw
 - Used in: permission confirm, edit review, plan approval
-- Uses `tty.setraw()` / `termios` for raw input, restores terminal state after
 
 ### Global Install
 - `bin/kodiqa` — shell script that runs venv Python directly
@@ -137,8 +139,8 @@ tests/           156 tests, all passing (~0.25s)
 - MCP tools automatically available to Claude and Qwen API (merged via `_get_all_tools()`)
 - MCP tool calls routed in both chat loops (split from regular tools)
 
-### Tab Autocomplete (kodiqa.py)
-- readline-based tab completion for slash commands, model aliases, modes, search engines, file paths
+### Tab Autocomplete (kodiqa.py: KodiqaCompleter)
+- prompt_toolkit `Completer` subclass for slash commands, model aliases, modes, search engines, file paths
 - Context-aware: `/model` completes model names, `/cd` completes paths, `/mode` completes mode names
 
 ### Context Window Management (kodiqa.py)
@@ -181,7 +183,7 @@ tests/           156 tests, all passing (~0.25s)
 - `~/.kodiqa/memory.db` — SQLite persistent memory (survives across sessions)
 - `~/.kodiqa/settings.json` — API keys (Claude, Qwen, Google), default model
 - `~/.kodiqa/config.json` — user-editable config (overrides defaults)
-- `~/.kodiqa/input_history` — readline arrow-key history (500 entries)
+- `~/.kodiqa/input_history` — prompt_toolkit FileHistory
 - `~/.kodiqa/KODIQA.md` — global context file (always loaded into system prompt)
 - `~/.kodiqa/projects/` — per-project context files
 - `~/.kodiqa/checkpoints/` — conversation checkpoints (JSON)
@@ -232,7 +234,7 @@ source ~/LLMS/kodiqa/venv/bin/activate && pytest -v
 ```
 
 ### Dependencies
-- Python 3.9+, rich, beautifulsoup4, requests, pytest (dev)
+- Python 3.9+, rich, beautifulsoup4, requests, prompt_toolkit, pytest (dev)
 - Ollama installed at `/Applications/Ollama.app`
 - Virtual environment at `./venv/`
 
@@ -269,8 +271,7 @@ Add the handler in `_handle_slash()` method in `kodiqa.py`. Update `/help` text.
 - API colors: Claude = yellow, Qwen = blue, Ollama = green, Consensus = magenta
 - Per-file undo buffer: `deque(maxlen=10)` storing content before each edit/write
 - Shell env detection at startup (OS, shell, Python, git, node, cargo, go, java, docker)
-- Readline fallback for systems without readline support
-- Arrow-key selector for all interactive prompts (tty/termios raw input)
-- `❯` prompt with status bar (modes, accept edits state)
+- prompt_toolkit for `❯` prompt with separator line, tab completion, file history
+- Arrow-key selector for all interactive prompts (tty/termios raw input, save/restore cursor)
 - pip-installable via `pyproject.toml` with `kodiqa` console script entry point
 - Workspace boundary protection: asks before accessing files outside cwd

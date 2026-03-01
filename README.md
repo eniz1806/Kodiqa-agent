@@ -17,13 +17,13 @@ kodiqa
 
 ## Features
 
-- **Claude Code-style UI** — `❯` prompt, status bar, arrow-key navigation for all prompts
+- **Claude Code-style UI** — `❯` prompt with separator line (prompt_toolkit), arrow-key navigation for all prompts
 - **26 tools** — file ops, git, search, web, memory, clipboard, multi-edit, undo, diff apply
 - **3 API providers** — Ollama (local/free), Claude API, Qwen API (DashScope)
 - **MCP server support** — connect external tool servers via Model Context Protocol
 - **Auto model discovery** — new Claude/Qwen models appear automatically from APIs
 - **Interactive pickers** — `/model` and `/key` show numbered menus, navigate with arrows
-- **Tab autocomplete** — slash commands, model names, file paths
+- **Tab autocomplete** — slash commands, model names, file paths (prompt_toolkit)
 - **Compact streaming** — hides code output, shows progress instead (toggle with `/verbose`)
 - **Thinking display** — shows spinner for `<think>` reasoning blocks, line count summary
 - **Multi-model consensus** — query all models, merge best answers
@@ -61,10 +61,10 @@ All interactive prompts use arrow keys — no typing letters:
 
 Navigate with **↑↓ arrows** or **j/k**, press **Enter** to select, or **1/2/3** to jump.
 
-Status bar shows current modes:
+Prompt uses a separator line (like Claude Code):
 ```
-  ❯❯ accept edits on  (shift+tab to cycle)
-❯
+────────────────────────────────────────
+❯ your prompt here
 ```
 
 ## Slash Commands
@@ -309,7 +309,7 @@ find any bugs in this code
 
 ```
 ~/LLMS/kodiqa/
-  kodiqa.py          # Main agent (~3150 lines)
+  kodiqa.py          # Main agent (~3000 lines)
   actions.py         # 26 action handlers (~940 lines)
   tools.py           # Tool schemas (~460 lines)
   config.py          # Config, aliases, system prompt (~335 lines)
@@ -326,7 +326,7 @@ find any bugs in this code
   settings.json      # API keys, default model
   memory.db          # Persistent memories
   session.json       # Auto-saved conversation
-  input_history      # Readline history (500 entries)
+  input_history      # prompt_toolkit history
   error.log          # Error log (capped 1MB)
   KODIQA.md          # Global context (always in system prompt)
   projects/          # Per-project context files
