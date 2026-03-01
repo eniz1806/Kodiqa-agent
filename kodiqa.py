@@ -500,7 +500,10 @@ class Kodiqa:
                     return
                 if not user_input.strip():
                     continue
-                if user_input.strip().startswith("/"):
+                if user_input.strip().lower() in ("quit", "exit"):
+                    self._quit()
+                    return
+                elif user_input.strip().startswith("/"):
                     self._handle_slash(user_input.strip())
                 else:
                     self._chat(user_input)
