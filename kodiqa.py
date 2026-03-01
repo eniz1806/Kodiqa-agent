@@ -502,17 +502,17 @@ class Kodiqa:
         parts = []
         # Accept edits indicator
         if self.batch_edits:
-            parts.append("\033[35m❯❯\033[0m \033[2maccept edits on\033[0m")
+            parts.append("[magenta]❯❯[/] [dim]accept edits on[/]")
         else:
-            parts.append("\033[35m❯❯\033[0m \033[2maccept edits off\033[0m")
+            parts.append("[magenta]❯❯[/] [dim]accept edits off[/]")
         # Plan mode
         if self.plan_mode:
-            parts.append("\033[33m⚡ plan mode\033[0m")
+            parts.append("[yellow]plan mode[/]")
         # Permission mode (only show if not default)
         if self.permission_mode != "default":
-            mode_icons = {"relaxed": "🔓 relaxed", "auto": "⚡ auto"}
-            parts.append(f"\033[36m{mode_icons.get(self.permission_mode, self.permission_mode)}\033[0m")
-        self.console.print(f"  {'  '.join(parts)} \033[2m(shift+tab to cycle)\033[0m")
+            mode_labels = {"relaxed": "[cyan]relaxed[/]", "auto": "[cyan]auto[/]"}
+            parts.append(mode_labels.get(self.permission_mode, self.permission_mode))
+        self.console.print(f"  {'  '.join(parts)}")
 
     def _first_run_setup(self):
         if "setup_done" in self.settings:
