@@ -17,40 +17,50 @@ source ~/LLMS/kodiqa/venv/bin/activate && python ~/LLMS/kodiqa/kodiqa.py
 
 - **26 tools** — file ops, git, search, web, memory, clipboard, multi-edit, undo, diff apply
 - **3 API providers** — Ollama (local/free), Claude API, Qwen API (DashScope)
+- **MCP server support** — connect external tool servers via Model Context Protocol
+- **Auto model discovery** — new Claude/Qwen models appear automatically from APIs
+- **Interactive model picker** — `/model` shows numbered list, pick by number
+- **Tab autocomplete** — slash commands, model names, file paths
 - **Compact streaming** — hides code output, shows progress instead (toggle with `/verbose`)
+- **Thinking display** — shows spinner for `<think>` reasoning blocks, line count summary
 - **Multi-model consensus** — query all models, merge best answers
 - **3 permission modes** — default (confirm all), relaxed (auto file ops), auto (no confirms)
 - **Plan mode** — AI explores + plans, you approve, then it implements
 - **Batch edit review** — queue edits, accept/reject per file interactively
+- **Context window management** — warns at 70%, auto-compacts at 85%, visual progress bar
+- **Conversation branching** — save/switch between conversation states
 - **Token tracking** — cost per response, session totals, tok/s speed
 - **Prompt caching** — Claude API cache for faster + cheaper responses
 - **Auto-retry** — exponential backoff on API errors (429, 5xx, timeouts)
 - **Undo** — per-file undo buffer (up to 10 levels)
 - **Checkpoints** — save/restore conversation state
 - **Session export** — export conversation to markdown
+- **Git-aware context** — auto-detects git repo, includes diff stats
+- **Project indexing** — symbol extraction (def/class/function), cached
 - **Shell env detection** — auto-detects OS, shell, dev tools
 - **User-editable config** — `~/.kodiqa/config.json` overrides defaults
 - **Diff preview** — colored diff before every file write/edit
 - **Parallel tools** — read-only operations run concurrently
 - **Conversation recovery** — auto-saved sessions, resume on crash
 - **Ollama auto-management** — starts on launch, stops on quit
+- **156 tests** — pytest test suite, all passing
 
 ## Slash Commands
 
 | Command | What it does |
 |---------|-------------|
-| `/model <name>` | Switch model (see shortcuts below) |
-| `/models` | List all available models |
+| `/model <name>` | Switch model (interactive picker if no arg) |
+| `/models` | List all available models (with live API discovery) |
 | `/multi <models>` | Multi-model consensus mode |
 | `/single` | Back to single model |
-| `/scan [path]` | Scan project into context (with progress) |
+| `/scan [path]` | Scan project into context (with symbol extraction) |
 | `/clear` | Clear conversation history |
 | `/compact` | Summarize conversation to save context |
 | `/memories` | Show stored memories |
 | `/forget <id>` | Delete a memory |
 | `/context` | Show project context file |
-| `/key [provider]` | Add/update API key (Claude or Qwen) |
-| `/tokens` | Session token usage, cost, context estimate |
+| `/key [provider]` | Add/update API key (interactive picker if no arg) |
+| `/tokens` | Session token usage, cost, context bar |
 | `/config` | Show config / `/config reload` to reload |
 | `/export` | Export session to markdown file |
 | `/checkpoint [n]` | Save conversation checkpoint |
@@ -62,6 +72,8 @@ source ~/LLMS/kodiqa/venv/bin/activate && python ~/LLMS/kodiqa/kodiqa.py
 | `/accept` | Toggle batch edit review |
 | `/search <engine>` | Switch search engine (duckduckgo/google/api) |
 | `/cd <path>` | Change working directory |
+| `/branch` | Save/switch/list conversation branches |
+| `/mcp` | Manage MCP tool servers (add/remove/list) |
 | `/help` | Show help |
 | `/quit` | Exit |
 
@@ -97,37 +109,58 @@ When enabled (default ON, toggle with `/accept`), file edits are queued and pres
 
 Navigate with `n`/`p`, view diffs with `d`, accept/reject individually or in bulk.
 
+## MCP Server Support
+
+Connect external tool servers via the Model Context Protocol:
+
+```
+/mcp add mytools npx my-mcp-server     # connect a server
+/mcp list                                # show connected servers + tools
+/mcp remove mytools                      # disconnect
+```
+
+MCP tools are automatically available to the AI alongside built-in tools.
+
 ## Model Shortcuts
 
 ### Local Models (free, unlimited, requires Ollama)
 
-| Shortcut | Full Model | Size | Best For |
-|----------|-----------|------|----------|
-| `/model fast` | qwen3:30b-a3b | ~3GB | Fast answers, 30B brain at 3B speed (MoE) |
-| `/model qwen` | qwen3:14b | ~9GB | General purpose, smart, thinking mode |
-| `/model coder` | qwen3-coder | ~3GB | Coding agent (default without API key, MoE) |
-| `/model reason` | phi4-reasoning | ~9GB | Deep reasoning, math, logic |
-| `/model gpt` | gpt-oss | ~12GB | OpenAI's open model, reasoning + agentic |
+| Shortcut | Full Model | Best For |
+|----------|-----------|----------|
+| `/model fast` | qwen3:30b-a3b | Fast answers, 30B brain at 3B speed (MoE) |
+| `/model qwen` | qwen3:14b | General purpose, smart, thinking mode |
+| `/model coder` | qwen3-coder | Coding agent (default without API key) |
+| `/model reason` | phi4-reasoning | Deep reasoning, math, logic |
+| `/model gpt` | gpt-oss | OpenAI's open model, reasoning + agentic |
 
 ### Claude API Models (paid, requires API key)
 
-| Shortcut | Full Model | Best For |
-|----------|-----------|----------|
-| `/model claude` | claude-sonnet-4 | Best balance of smart + fast (default with key) |
-| `/model sonnet` | claude-sonnet-4 | Same as claude |
-| `/model haiku` | claude-haiku-4.5 | Fast + cheap, good for simple tasks |
-| `/model opus` | claude-opus-4 | Smartest, best for complex coding |
+| Shortcut | Full Model | Price (in/out per MTok) |
+|----------|-----------|-------------------------|
+| `/model claude` / `sonnet` | claude-sonnet-4-6 | $3/$15 |
+| `/model opus` | claude-opus-4-6 | $5/$25 |
+| `/model haiku` | claude-haiku-4-5 | $1/$5 |
+| `/model sonnet-4.5` | claude-sonnet-4-5 | $3/$15 |
+| `/model opus-4.5` | claude-opus-4-5 | $5/$25 |
+| `/model opus-4.1` | claude-opus-4-1 | $15/$75 |
+| `/model sonnet-4` / `opus-4` | Legacy Claude 4 | varies |
 
 ### Qwen API Models (paid, Alibaba Cloud DashScope)
 
-| Shortcut | Full Model | Context | Best For |
-|----------|-----------|---------|----------|
-| `/model qwen-api` | qwen-plus | 1M tokens | Smart + affordable |
-| `/model qwen-max` | qwen-max | 262K tokens | Most powerful |
-| `/model qwen-coder-api` | qwen3-coder-plus | 1M tokens | Code + tool calling |
-| `/model qwen-flash-api` | qwen-flash | 1M tokens | Ultra cheap ($0.05/M input) |
+| Shortcut | Full Model | Best For |
+|----------|-----------|----------|
+| `/model qwen3.5` / `qwen-plus` | qwen3.5-plus | Newest flagship |
+| `/model qwen3.5-flash` | qwen3.5-flash | Fast 3.5 |
+| `/model qwen-max` | qwen3-max | Most powerful |
+| `/model qwen-coder` | qwen3-coder-plus | Coding |
+| `/model qwq` | qwq-plus | Deep reasoning |
+| `/model qwen-long` | qwen-long-latest | 10M context |
+| `/model qwen-math` | qwen-math-plus | Math |
+| `/model qwen-turbo` | qwen-turbo | Cheapest/fastest |
 
-You can also use full model names: `/model qwen3:14b`
+New models are auto-discovered from the APIs — they appear in `/model` and `/models` automatically.
+
+You can also use full model names: `/model qwen3:14b` or `/model claude-opus-4-6`
 
 ## Compact Streaming Mode
 
@@ -153,15 +186,15 @@ Use `/verbose` to toggle full output (see all code as it streams).
 
 ### Claude API
 ```
-/key              → add or update Claude API key
-/model claude     → prompts for key if not set
+/key              → choose Claude, paste API key
+/model claude     → use Claude Sonnet 4.6
 ```
 Get your key: https://console.anthropic.com/settings/keys
 
 ### Qwen API (Alibaba Cloud DashScope)
 ```
-/key qwen         → add or update Qwen API key
-/model qwen-api   → prompts for key if not set
+/key              → choose Qwen, paste API key
+/model qwen3.5    → use Qwen 3.5 Plus
 ```
 Get your key: https://bailian.console.alibabacloud.com/?apiKey=1
 
@@ -252,12 +285,14 @@ find any bugs in this code
 
 ```
 ~/LLMS/kodiqa/
-  kodiqa.py          # Main agent (~2580 lines)
+  kodiqa.py          # Main agent (~2995 lines)
   actions.py         # 26 action handlers (~940 lines)
   tools.py           # Tool schemas (~460 lines)
-  config.py          # Config, aliases, system prompt (~290 lines)
+  config.py          # Config, aliases, system prompt (~335 lines)
   web.py             # Web search + page fetch (~195 lines)
   memory.py          # SQLite persistent memory (82 lines)
+  mcp.py             # MCP client (~175 lines)
+  tests/             # 156 tests (pytest)
   requirements.txt   # Dependencies
   venv/              # Python virtual environment
 
@@ -281,16 +316,26 @@ find any bugs in this code
 - Use `/mode relaxed` to skip file edit confirmations
 - Use `/plan` for complex tasks — review the plan before implementation
 - Use `/accept` to toggle batch edit review on/off
+- Use `/branch save` before experimenting — switch back if it goes wrong
+- Use `/mcp add` to connect external tool servers
 - Use `/checkpoint` before risky operations, `/restore` to roll back
 - Use `/export` to save a conversation for later reference
-- Use `/tokens` to monitor API costs
-- Use `/model qwen-flash-api` for ultra-cheap API queries
-- Use `/scan` before asking about a project
-- Use `/compact` when conversation gets long
+- Use `/tokens` to monitor API costs and context usage
+- Use `/model` with no arg for interactive picker
+- Use `/key` with no arg to choose provider
+- Tab complete works for commands, models, and file paths
+- New API models appear automatically — no code updates needed
 - Memories persist forever across sessions
 - Arrow keys work: up/down for history, left/right to edit
 - Sessions auto-save — restart if anything goes wrong
 - Ollama starts and stops automatically
+
+## Testing
+
+```bash
+source ~/LLMS/kodiqa/venv/bin/activate
+pytest -v          # 156 tests, all passing
+```
 
 ## Requirements
 

@@ -1,18 +1,36 @@
 # Kodiqa - Local AI Coding Agent
 
 ## What This Is
-A Claude Code clone that runs 100% locally using free Ollama models, with optional Claude API and Qwen API for smarter responses. Python CLI agent with multi-model consensus, 26 tools, MCP server support, 3 permission modes, plan mode, batch edit review, tab autocomplete, context window management, conversation branching, thinking display, web search, persistent memory, compact streaming, and full filesystem access.
+A Claude Code clone that runs 100% locally using free Ollama models, with optional Claude API and Qwen API for smarter responses. Python CLI agent with multi-model consensus, 26 tools, MCP server support, auto model discovery, 3 permission modes, plan mode, batch edit review, tab autocomplete, context window management, conversation branching, thinking display, web search, persistent memory, compact streaming, and full filesystem access.
 
 ## Architecture
 
 ```
-kodiqa.py  (~2870 lines)  Main agent: Kodiqa class, StreamWriter, chat loops, slash commands, modes, MCP, branching, Ollama + Claude + Qwen API
+kodiqa.py  (~2995 lines)  Main agent: Kodiqa class, StreamWriter, chat loops, slash commands, modes, MCP, branching, auto-discovery
 actions.py (~940 lines)   26 action handlers: file ops, git, search, web, memory, clipboard, multi_edit, edit queue + diff preview
 tools.py   (~460 lines)   Tool schemas (Claude native format, converted to OpenAI format for Qwen)
-config.py  (~290 lines)   Constants, model aliases (Ollama/Claude/Qwen), system prompt, user-editable config
+config.py  (~335 lines)   Constants, model aliases (all Claude 4.6/4.5/4 + Qwen 3.5/3), system prompt, config
 web.py     (~195 lines)   3 search engines (DuckDuckGo, Google scrape, Google API) + page fetcher
 memory.py  (82 lines)     SQLite-backed persistent memory store
 mcp.py     (~175 lines)   MCP client: MCPServer (stdio JSON-RPC transport) + MCPManager (multi-server)
+```
+
+## Test Suite
+
+```
+tests/           156 tests, all passing (~0.25s)
+  conftest.py          Shared fixtures (sample_file, sample_tree, memory_store)
+  test_parse_actions   Action parsing (~18 tests)
+  test_config          Config functions (~13 tests)
+  test_file_ops        File operations (~15 tests)
+  test_search_ops      Search operations (~13 tests)
+  test_edit_queue      Edit queue + undo (~10 tests)
+  test_memory          Memory store (~8 tests)
+  test_dispatch        Dispatch + execution (~14 tests)
+  test_web             Web functions (~7 tests)
+  test_stream_writer   StreamWriter (~5 tests)
+  test_mcp             MCP client (~27 tests)
+  test_new_features    Thinking, branching, slash commands (~16 tests)
 ```
 
 ## Triple-Mode Design
@@ -28,6 +46,38 @@ mcp.py     (~175 lines)   MCP client: MCPServer (stdio JSON-RPC transport) + MCP
 | Ollama | — | `MODEL_ALIASES` | default | `localhost:11434` |
 | Claude | `claude_api_key` | `CLAUDE_ALIASES` | `is_claude_model()` | `api.anthropic.com` |
 | Qwen | `qwen_api_key` | `QWEN_ALIASES` | `is_qwen_api_model()` | `dashscope-intl.aliyuncs.com` |
+
+## API Models
+
+### Claude API (11 aliases)
+| Alias | Model ID | Price (in/out per MTok) |
+|-------|----------|-------------------------|
+| `claude` / `sonnet` | claude-sonnet-4-6 | $3/$15 |
+| `opus` | claude-opus-4-6 | $5/$25 |
+| `haiku` | claude-haiku-4-5-20251001 | $1/$5 |
+| `sonnet-4.5` | claude-sonnet-4-5-20250929 | $3/$15 |
+| `opus-4.5` | claude-opus-4-5-20251101 | $5/$25 |
+| `opus-4.1` | claude-opus-4-1-20250805 | $15/$75 |
+| `sonnet-4` | claude-sonnet-4-20250514 | $3/$15 |
+| `opus-4` | claude-opus-4-20250514 | $15/$75 |
+
+### Qwen API (13 aliases)
+| Alias | Model ID | Best For |
+|-------|----------|----------|
+| `qwen3.5` / `qwen-plus` | qwen3.5-plus-2026-02-15 | Newest flagship |
+| `qwen3.5-flash` | qwen3.5-flash | Fast 3.5 |
+| `qwen-max` | qwen3-max | Most powerful |
+| `qwen-coder` | qwen3-coder-plus | Coding |
+| `qwq` | qwq-plus | Deep reasoning |
+| `qwen-long` | qwen-long-latest | 10M context |
+| `qwen-math` | qwen-math-plus | Math |
+| `qwen-turbo` | qwen-turbo | Cheapest/fastest |
+
+### Auto Model Discovery
+- `_fetch_api_models()` fetches live model lists from Claude and Qwen API endpoints
+- Cached for 10 minutes to avoid repeated API calls
+- New models appear automatically in `/model` picker and `/models` list
+- Live models shown as "(live)" — usable by full model ID
 
 ## Key Patterns
 
@@ -55,53 +105,57 @@ mcp.py     (~175 lines)   MCP client: MCPServer (stdio JSON-RPC transport) + MCP
 - **relaxed** — auto-approve file ops, only confirm commands (run_command, git_commit, delete_file)
 - **auto** — no confirmations, everything auto-approved
 - Toggle with `/mode [default|relaxed|auto]`
-- Implemented in `_confirm()` method
 
 ### Plan Mode (kodiqa.py: `self.plan_mode`)
 - Activated with `/plan`
 - Two-phase flow: AI explores + plans (read-only, no writes), user approves/revises/rejects, then AI implements
-- Plan prefix injected into user message in `_chat()`
-- `_show_plan_approval()` presents approve/revise/reject panel
-- State: `self.plan_mode`, `self._pending_plan`, `self._plan_request`
 
 ### Batch Edit Review (actions.py + kodiqa.py)
 - Toggle with `/accept` (default ON: `self.batch_edits = True`)
-- When enabled, `set_batch_mode(True)` in actions.py causes file edits to queue instead of apply
-- Edit queue: `_edit_queue` list, manipulated via `set_batch_mode()`, `get_edit_queue()`, `apply_queued_edit()`, `reject_queued_edit()`, `clear_edit_queue()`
-- After AI finishes, `_review_edit_queue()` shows interactive review:
-  - Per-file summary with accept (a) / reject (r) / diff (d) / next (n) / prev (p) controls
-  - Accept All (A) / Reject All (R) / quit (q)
-- Wired into all 3 chat loops (Ollama, Claude, Qwen)
+- When enabled, file edits queue instead of applying immediately
+- After AI finishes, interactive review: accept/reject per file, diff view, bulk accept/reject
+
+### MCP Server Support (mcp.py + kodiqa.py)
+- `MCPServer` class: stdio JSON-RPC transport, initialize/tools/list/tools/call
+- `MCPManager` class: manages multiple servers, routes tool calls
+- `/mcp add <name> <command>` — connect a server
+- `/mcp remove <name>` — disconnect
+- `/mcp list` — show connected servers + tools
+- MCP tools automatically available to Claude and Qwen API (merged via `_get_all_tools()`)
+- MCP tool calls routed in both chat loops (split from regular tools)
+
+### Tab Autocomplete (kodiqa.py)
+- readline-based tab completion for slash commands, model aliases, modes, search engines, file paths
+- Context-aware: `/model` completes model names, `/cd` completes paths, `/mode` completes mode names
+
+### Context Window Management (kodiqa.py)
+- `_context_limit()`: 200K for Claude, 1M for Qwen, config-based for Ollama
+- `_auto_compact_if_needed()`: warns at 70%, auto-compacts at 85%
+- `/tokens` shows visual progress bar with percentage
+
+### Conversation Branching (kodiqa.py)
+- `/branch save <name>` — save current conversation state
+- `/branch switch <name>` — switch to a saved branch (auto-saves current as `_previous`)
+- `/branch delete <name>` — remove a branch
+- `/branch list` — show all branches
+
+### Thinking Display (kodiqa.py: StreamWriter)
+- Detects `<think>...</think>` blocks from Qwen/reasoning models
+- Shows spinner during thinking, summary line count after
+- Hidden in compact mode, passed through in verbose mode
 
 ### Compact Streaming Mode (kodiqa.py: StreamWriter)
 - Default ON (`self.compact_mode = True`), toggle with `/verbose`
-- `StreamWriter` class intercepts streaming output token-by-token
-- Detects ` ``` ` code fences and `[ACTION:]` blocks in real-time
-- **Text/explanations** — shown normally as they stream
-- **Code blocks** — hidden, replaced with live spinner showing line count + char count
-- **ACTION blocks** — hidden with progress indicator (Ollama text mode)
+- Hides code blocks + ACTION blocks + think blocks with progress indicators
 
-### Parallel Execution (actions.py)
-Read-only tools run in `ThreadPoolExecutor(max_workers=4)`. Write/command tools run sequentially with user confirmation.
+### Interactive Model Picker
+- `/model` with no arg shows numbered list of all models (local + Claude + Qwen + live API)
+- Pick by number or name
+- Current model marked with arrow
 
-### Multi-Model Consensus (kodiqa.py)
-Models queried **sequentially** (one at a time, `keep_alive: 0` to free RAM). A judge model merges responses into a consensus answer. Supports mixing Ollama + Claude + Qwen API models.
-
-### Error Handling & Retry
-- `_retry_api_call(fn, max_retries=3, backoff_base=2)` — retries on 429, 5xx, ConnectionError
-- Error logging to `~/.kodiqa/error.log` (capped at 1MB)
-- Graceful degradation with provider switch suggestions
-
-### Token Usage & Cost Tracking
-- `COST_TABLE` maps model IDs to (input, output) pricing per 1M tokens
-- `_display_token_usage()` shows tokens, tok/s, and cost after each response
-- `self.session_tokens` tracks cumulative input/output/cache/cost
-- `/tokens` shows session totals + context estimate
-
-### Prompt Caching (Claude)
-- `anthropic-beta: prompt-caching-2024-07-31` header
-- System prompt + last tool definition marked with `cache_control: {"type": "ephemeral"}`
-- Cache hits visible in token usage display
+### Interactive Key Picker
+- `/key` with no arg asks which provider (Claude or Qwen)
+- Shows status (set/not set) for each provider
 
 ### Session & State
 - `~/.kodiqa/session.json` — auto-saved conversation for crash recovery
@@ -115,21 +169,21 @@ Models queried **sequentially** (one at a time, `keep_alive: 0` to free RAM). A 
 - `~/.kodiqa/exports/` — exported session markdown files
 - `~/.kodiqa/error.log` — error log
 
-### Slash Commands (27 total)
+### Slash Commands (29 total)
 | Command | Description |
 |---------|-------------|
-| `/model <name>` | Switch model (local: fast, qwen, coder, reason, gpt; Claude: claude, sonnet, haiku, opus; Qwen: qwen-api, qwen-max, qwen-coder-api, qwen-flash-api) |
+| `/model <name>` | Switch model (interactive picker if no arg) |
 | `/multi <models>` | Multi-model consensus mode |
 | `/single` | Back to single model |
-| `/models` | List all available models |
-| `/scan [path]` | Scan project into context (with progress) |
+| `/models` | List all available models (with live API discovery) |
+| `/scan [path]` | Scan project into context (with progress + symbol extraction) |
 | `/clear` | Clear conversation |
 | `/compact` | Summarize conversation to save context |
 | `/memories` | Show stored memories |
 | `/forget <id>` | Delete a memory |
 | `/context` | Show project context file |
-| `/key [provider]` | Add/update API key |
-| `/tokens` | Session token usage + cost |
+| `/key [provider]` | Add/update API key (interactive picker if no arg) |
+| `/tokens` | Session token usage + cost + visual progress bar |
 | `/config` | Show/reload config |
 | `/export` | Export session to markdown |
 | `/checkpoint [name]` | Save conversation checkpoint |
@@ -141,6 +195,8 @@ Models queried **sequentially** (one at a time, `keep_alive: 0` to free RAM). A 
 | `/accept` | Toggle batch edit review |
 | `/search` | Switch search engine |
 | `/cd <path>` | Change working directory |
+| `/branch` | Save/switch/list conversation branches |
+| `/mcp` | Manage MCP tool servers (add/remove/list) |
 | `/help` | Show help |
 | `/quit` | Exit |
 
@@ -151,8 +207,13 @@ Models queried **sequentially** (one at a time, `keep_alive: 0` to free RAM). A 
 source ~/LLMS/kodiqa/venv/bin/activate && python ~/LLMS/kodiqa/kodiqa.py
 ```
 
+### Test
+```bash
+source ~/LLMS/kodiqa/venv/bin/activate && pytest -v
+```
+
 ### Dependencies
-- Python 3.9+, rich, beautifulsoup4, requests
+- Python 3.9+, rich, beautifulsoup4, requests, pytest (dev)
 - Ollama installed at `/Applications/Ollama.app`
 - Virtual environment at `./venv/`
 
@@ -173,13 +234,13 @@ source ~/LLMS/kodiqa/venv/bin/activate && python ~/LLMS/kodiqa/kodiqa.py
 4. Update `_chat()` dispatch, `_chat_multi()`, `_compact()`, `/model`, `/key`, `/help`, `_list_models()`, `_welcome()`
 
 ### Adding a New Model Alias
-Add to `MODEL_ALIASES` (Ollama), `CLAUDE_ALIASES` (Claude API), or `QWEN_ALIASES` (Qwen API) in `config.py`.
+Add to `MODEL_ALIASES` (Ollama), `CLAUDE_ALIASES` (Claude API), or `QWEN_ALIASES` (Qwen API) in `config.py`. Or just use full model name — live API models are auto-discovered.
 
 ### Adding a New Slash Command
-Add the handler in `_handle_slash()` method in `kodiqa.py`. Update `/help` text.
+Add the handler in `_handle_slash()` method in `kodiqa.py`. Update `/help` text. Add to `_SLASH_COMMANDS` list.
 
 ## Conventions
-- No tests yet — manual testing only
+- 156 tests via pytest (`tests/` directory)
 - No type hints — plain Python 3.9 style
 - Rich library for all terminal UI (panels, markdown, prompts, status spinners)
 - All file paths are expanded with `os.path.expanduser()` before use
@@ -189,3 +250,4 @@ Add the handler in `_handle_slash()` method in `kodiqa.py`. Update `/help` text.
 - API colors: Claude = yellow, Qwen = blue, Ollama = green, Consensus = magenta
 - Per-file undo buffer: `deque(maxlen=10)` storing content before each edit/write
 - Shell env detection at startup (OS, shell, Python, git, node, cargo, go, java, docker)
+- Readline fallback for systems without readline support
