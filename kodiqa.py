@@ -376,7 +376,7 @@ class Kodiqa:
         _setup_error_log()
         self.claude_key = self.settings.get("claude_api_key", "")
         self.session_file = os.path.join(KODIQA_DIR, "session.json")
-        self.multi_models = self._discover_models()  # default: multi-model mode
+        self.multi_models = []  # default: single model mode
         self._auto_approved = set()  # action types auto-approved this session
         self.session_tokens = {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0, "cost": 0.0}
         self._ollama_started_by_us = False  # track if we started Ollama
@@ -922,9 +922,7 @@ class Kodiqa:
             except Exception as e:
                 self.console.print(f"  [red]●[/] Error: {e}")
 
-        # Refresh multi-model list
-        self.multi_models = self._discover_models()
-        self.console.print(f"\n[green]Models updated! Now using {len(self.multi_models)} models in multi-mode.[/]")
+        self.console.print(f"\n[green]Models pulled! Use /multi all for multi-model mode.[/]")
         # Auto-set model if current one wasn't installed
         if not installed and to_pull:
             self.model = to_pull[0]
