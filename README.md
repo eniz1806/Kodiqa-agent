@@ -48,6 +48,8 @@ kodiqa
 - **Workspace boundary** — asks permission before accessing files outside working directory
 - **Smart Ollama lifecycle** — starts on launch, stops when switching to cloud, restarts on local switch
 - **Dynamic model library** — fetches available Ollama models from ollama.com with pull counts
+- **Unlimited iterations** — no artificial cap, AI keeps working until the task is done
+- **Live API model routing** — auto-discovered models from Claude/Qwen APIs routed to correct provider
 - **156 tests** — pytest test suite, all passing
 
 ## Arrow-Key UI
@@ -311,7 +313,7 @@ find any bugs in this code
 
 ```
 ~/LLMS/kodiqa/
-  kodiqa.py          # Main agent (~3280 lines)
+  kodiqa.py          # Main agent (~3285 lines)
   actions.py         # 26 action handlers (~950 lines)
   tools.py           # Tool schemas (~460 lines)
   config.py          # Config, aliases, system prompt (~335 lines)

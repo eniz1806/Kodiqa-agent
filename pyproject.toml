@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kodiqa"
-version = "1.4.0"
+version = "1.5.0"
 description = "Local AI coding agent — Claude Code clone with Ollama, Claude API, and Qwen API"
 readme = "README.md"
 license = {text = "MIT"}

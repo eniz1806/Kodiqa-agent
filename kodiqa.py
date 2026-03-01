@@ -26,7 +26,7 @@ import time
 from config import (
     OLLAMA_URL, OLLAMA_BIN, DEFAULT_MODEL, MODEL_ALIASES, CLAUDE_ALIASES,
     CLAUDE_API_URL, QWEN_ALIASES, QWEN_API_URL, CONTEXT_FILE, KODIQA_DIR,
-    CONFIG_FILE, MAX_ITERATIONS, SYSTEM_PROMPT, SKIP_DIRS, SKIP_EXTENSIONS,
+    CONFIG_FILE, SYSTEM_PROMPT, SKIP_DIRS, SKIP_EXTENSIONS,
     MAX_FILE_SIZE, DEFAULTS,
     load_settings, save_settings, load_config, save_default_config,
     is_claude_model, is_qwen_api_model,
@@ -683,9 +683,9 @@ class Kodiqa:
         return "\n\n".join(parts)
 
     def _welcome(self):
-        if is_claude_model(self.model):
+        if is_claude_model(self.model) or self._is_live_claude(self.model):
             provider = "[yellow]Claude API[/]"
-        elif is_qwen_api_model(self.model):
+        elif is_qwen_api_model(self.model) or self._is_live_qwen(self.model):
             provider = "[blue]Qwen API[/]"
         else:
             # Check if the local model actually exists
@@ -1070,7 +1070,21 @@ class Kodiqa:
                     return
                 if pick.isdigit() and 1 <= int(pick) <= len(choices):
                     alias, full, prov = choices[int(pick) - 1]
-                    arg = alias
+                    # Direct pick by number — use provider from list
+                    self.model = full
+                    self.multi_models = []
+                    if prov == "claude":
+                        self._stop_ollama()
+                        provider = "[yellow]Claude API[/]"
+                    elif prov == "qwen":
+                        self._stop_ollama()
+                        provider = "[blue]Qwen API[/]"
+                    else:
+                        provider = "[green]Local[/]"
+                        self._ensure_ollama()
+                    self.console.print(f"Switched to [cyan]{self.model}[/] ({provider}) [dim](single mode)[/]")
+                    self.console.print("[dim]Use /multi all to go back to multi-model mode[/]")
+                    return
                 else:
                     arg = pick
             if arg in CLAUDE_ALIASES:
@@ -1103,15 +1117,15 @@ class Kodiqa:
                 new_model = arg
             self.model = new_model
             self.multi_models = []  # switch to single mode
-            if is_claude_model(self.model) or is_qwen_api_model(self.model):
+            if is_claude_model(self.model) or is_qwen_api_model(self.model) or self._is_live_claude(self.model) or self._is_live_qwen(self.model):
                 self._stop_ollama()
-            if is_claude_model(self.model):
+            if is_claude_model(self.model) or self._is_live_claude(self.model):
                 provider = "[yellow]Claude API[/]"
-            elif is_qwen_api_model(self.model):
+            elif is_qwen_api_model(self.model) or self._is_live_qwen(self.model):
                 provider = "[blue]Qwen API[/]"
             else:
                 provider = "[green]Local[/]"
-                self._check_updates()
+                self._ensure_ollama()
             self.console.print(f"Switched to [cyan]{self.model}[/] ({provider}) [dim](single mode)[/]")
             self.console.print("[dim]Use /multi all to go back to multi-model mode[/]")
         elif command == "/multi":
@@ -1486,14 +1500,14 @@ class Kodiqa:
         return extra_claude, extra_qwen
 
     def _list_models(self):
-        choices = []  # (display_name, model_id)
+        choices = []  # list of (model_name, provider)
         n = 0
         lines = []
         if self.claude_key:
             lines.append("[bold yellow]Claude API:[/]")
             for alias, model in CLAUDE_ALIASES.items():
                 n += 1
-                choices.append(model)
+                choices.append((model, "claude"))
                 marker = " [cyan]◀[/]" if model == self.model else ""
                 lines.append(f"  [dim]{n:>3}.[/] [cyan]{model}[/] [dim](/{alias})[/]{marker}")
             extra_claude, _ = self._get_api_model_choices()
@@ -1501,7 +1515,7 @@ class Kodiqa:
                 lines.append("  [dim]── additional (from API) ──[/]")
                 for m in extra_claude:
                     n += 1
-                    choices.append(m)
+                    choices.append((m, "claude"))
                     marker = " [cyan]◀[/]" if m == self.model else ""
                     lines.append(f"  [dim]{n:>3}.[/] [cyan]{m}[/]{marker}")
             lines.append("")
@@ -1509,7 +1523,7 @@ class Kodiqa:
             lines.append("[bold blue]Qwen API:[/]")
             for alias, model in QWEN_ALIASES.items():
                 n += 1
-                choices.append(model)
+                choices.append((model, "qwen"))
                 marker = " [cyan]◀[/]" if model == self.model else ""
                 lines.append(f"  [dim]{n:>3}.[/] [cyan]{model}[/] [dim](/{alias})[/]{marker}")
             _, extra_qwen = self._get_api_model_choices()
@@ -1517,7 +1531,7 @@ class Kodiqa:
                 lines.append("  [dim]── additional (from API) ──[/]")
                 for m in extra_qwen:
                     n += 1
-                    choices.append(m)
+                    choices.append((m, "qwen"))
                     marker = " [cyan]◀[/]" if m == self.model else ""
                     lines.append(f"  [dim]{n:>3}.[/] [cyan]{m}[/]{marker}")
             lines.append("")
@@ -1532,7 +1546,7 @@ class Kodiqa:
                 for m in models:
                     name = m["name"]
                     n += 1
-                    choices.append(name)
+                    choices.append((name, "local"))
                     size = m.get("size", 0)
                     size_str = f"{size / 1e9:.1f}GB" if size > 1e9 else f"{size / 1e6:.0f}MB"
                     marker = " [cyan]◀[/]" if name == self.model else ""
@@ -1550,18 +1564,18 @@ class Kodiqa:
             if pick.lower() in ("skip", ""):
                 return
             if pick.isdigit() and 1 <= int(pick) <= len(choices):
-                new_model = choices[int(pick) - 1]
+                new_model, prov = choices[int(pick) - 1]
                 self.model = new_model
                 self.multi_models = []
-                if is_claude_model(self.model) or is_qwen_api_model(self.model):
+                if prov == "claude":
                     self._stop_ollama()
-                if is_claude_model(self.model):
                     provider = "[yellow]Claude API[/]"
-                elif is_qwen_api_model(self.model):
+                elif prov == "qwen":
+                    self._stop_ollama()
                     provider = "[blue]Qwen API[/]"
                 else:
                     provider = "[green]Local[/]"
-                    self._check_updates()
+                    self._ensure_ollama()
                 self.console.print(f"Switched to [cyan]{self.model}[/] ({provider})")
             else:
                 self.console.print(f"[dim]Invalid choice.[/]")
@@ -1749,12 +1763,22 @@ class Kodiqa:
         """Route to the correct provider chat method."""
         if self.multi_models:
             self._chat_multi(user_msg)
-        elif is_claude_model(self.model):
+        elif is_claude_model(self.model) or self._is_live_claude(self.model):
             self._chat_claude(user_msg)
-        elif is_qwen_api_model(self.model):
+        elif is_qwen_api_model(self.model) or self._is_live_qwen(self.model):
             self._chat_qwen(user_msg)
         else:
             self._chat_ollama(user_msg)
+
+    def _is_live_claude(self, model_name):
+        """Check if model is in cached live Claude model list."""
+        cached = getattr(self, "_cached_api_models", None)
+        return cached is not None and model_name in cached.get("claude", [])
+
+    def _is_live_qwen(self, model_name):
+        """Check if model is in cached live Qwen model list."""
+        cached = getattr(self, "_cached_api_models", None)
+        return cached is not None and model_name in cached.get("qwen", [])
 
     def _review_edit_queue(self):
         """Show batch edit review panel — cycle through queued edits, accept/reject each."""
@@ -2087,7 +2111,7 @@ class Kodiqa:
         except Exception:
             pass
         self.history.append({"role": "user", "content": user_msg})
-        for iteration in range(MAX_ITERATIONS):
+        while True:
             memories_ctx = self.memory.get_context()
             context_file_ctx = self._load_context_file()
             system_prompt = SYSTEM_PROMPT.format(cwd=self.cwd, model=self.model, memories=memories_ctx)
@@ -2109,7 +2133,7 @@ class Kodiqa:
             actions = parse_actions(assistant_text)
             if not actions:
                 self._save_session()
-                break
+                return
             # Enable batch mode if active
             if self.batch_edits:
                 set_batch_mode(True)
@@ -2133,17 +2157,13 @@ class Kodiqa:
                     results.append(f"[Edit Review]\n{rr}")
             set_batch_mode(False)
             self.history.append({"role": "user", "content": f"[Action Results]\n" + "\n\n".join(results)})
-            if iteration > 0 and iteration < MAX_ITERATIONS - 1:
-                self.console.print(f"  [dim]({iteration + 1}/{MAX_ITERATIONS} iterations)[/]")
-        else:
-            self.console.print(f"[yellow]Reached max iterations ({MAX_ITERATIONS}). Stopping.[/]")
 
     # ── Claude chat (native tool_use API) ──
 
     def _chat_claude(self, user_msg):
         self.history.append({"role": "user", "content": user_msg})
 
-        for iteration in range(MAX_ITERATIONS):
+        while True:
             memories_ctx = self.memory.get_context()
             context_file_ctx = self._load_context_file()
             system_prompt = CLAUDE_SYSTEM.format(cwd=self.cwd, model=self.model, memories=memories_ctx)
@@ -2182,7 +2202,7 @@ class Kodiqa:
 
             if not tool_calls:
                 self._save_session()
-                break  # No tools = done
+                return  # No tools = done
 
             # Enable batch mode if active
             if self.batch_edits:
@@ -2258,12 +2278,6 @@ class Kodiqa:
 
             self.history.append({"role": "user", "content": tool_results})
             self._save_session()
-
-            if iteration > 0 and iteration < MAX_ITERATIONS - 1:
-                self.console.print(f"  [dim]({iteration + 1}/{MAX_ITERATIONS} iterations)[/]")
-
-        else:
-            self.console.print(f"[yellow]Reached max iterations ({MAX_ITERATIONS}). Stopping.[/]")
 
     def _build_claude_messages(self):
         """Convert history to Claude API format. Handles content blocks properly."""
@@ -2540,7 +2554,7 @@ class Kodiqa:
     def _chat_qwen(self, user_msg):
         self.history.append({"role": "user", "content": user_msg})
 
-        for iteration in range(MAX_ITERATIONS):
+        while True:
             memories_ctx = self.memory.get_context()
             context_file_ctx = self._load_context_file()
             system_prompt = CLAUDE_SYSTEM.format(cwd=self.cwd, model=self.model, memories=memories_ctx)
@@ -2577,7 +2591,7 @@ class Kodiqa:
 
             if not tool_calls:
                 self._save_session()
-                break
+                return
 
             # Enable batch mode if active
             if self.batch_edits:
@@ -2628,11 +2642,6 @@ class Kodiqa:
                     "content": result,
                 })
             self._save_session()
-
-            if iteration > 0 and iteration < MAX_ITERATIONS - 1:
-                self.console.print(f"  [dim]({iteration + 1}/{MAX_ITERATIONS} iterations)[/]")
-        else:
-            self.console.print(f"[yellow]Reached max iterations ({MAX_ITERATIONS}). Stopping.[/]")
 
     def _build_qwen_messages(self, system_prompt):
         """Convert history to OpenAI message format for Qwen API."""
@@ -3113,6 +3122,10 @@ class Kodiqa:
         fd = sys.stdin.fileno()
         old_settings = termios.tcgetattr(fd)
         n = len(options)
+        out_fd = sys.stdout.fileno()  # write directly to fd, bypass Rich wrapper
+
+        def _write(s):
+            os.write(out_fd, s.encode())
 
         def render():
             for i, (label, desc) in enumerate(options):
@@ -3125,15 +3138,11 @@ class Kodiqa:
                     if desc:
                         line += f" — {desc}"
                     line += "\033[0m"
-                sys.stdout.write(f"\r\033[K{line}\n")
-            sys.stdout.flush()
+                _write(f"\r\033[K{line}\n")
 
         try:
-            # Save cursor position, render options
-            sys.stdout.write("\033[s")
-            sys.stdout.flush()
             render()
-            tty.setraw(fd)
+            tty.setcbreak(fd)
             while True:
                 ch = sys.stdin.read(1)
                 if ch == "\r" or ch == "\n":  # Enter
@@ -3158,12 +3167,9 @@ class Kodiqa:
                     if idx < n:
                         selected = idx
                         break
-                # Restore cursor, re-render in place
-                termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-                sys.stdout.write("\033[u")
-                sys.stdout.flush()
+                # Move cursor up N lines, re-render in place
+                _write(f"\033[{n}A")
                 render()
-                tty.setraw(fd)
         except (EOFError, OSError):
             pass
         finally:
