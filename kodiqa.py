@@ -483,8 +483,8 @@ class Kodiqa:
         self._first_run_setup()
         self._detect_git()
         self._load_session()
-        self._welcome()
         self._check_updates()
+        self._welcome()
         try:
             while True:
                 try:
