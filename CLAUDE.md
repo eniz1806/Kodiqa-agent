@@ -6,7 +6,7 @@ A Claude Code clone that runs 100% locally using free Ollama models, with option
 ## Architecture
 
 ```
-kodiqa.py  (~3060 lines)  Main agent: Kodiqa class, StreamWriter, arrow-key UI, chat loops, slash commands, modes, MCP, branching, auto-discovery
+kodiqa.py  (~3150 lines)  Main agent: Kodiqa class, StreamWriter, arrow-key UI, chat loops, slash commands, modes, MCP, branching, auto-discovery, workspace boundary
 actions.py (~940 lines)   26 action handlers: file ops, git, search, web, memory, clipboard, multi_edit, edit queue + diff preview
 tools.py   (~460 lines)   Tool schemas (Claude native format, converted to OpenAI format for Qwen)
 config.py  (~335 lines)   Constants, model aliases (all Claude 4.6/4.5/4 + Qwen 3.5/3), system prompt, config
@@ -170,6 +170,12 @@ tests/           156 tests, all passing (~0.25s)
 - `/key` with no arg asks which provider (Claude or Qwen)
 - Shows status (set/not set) for each provider
 
+### Workspace Boundary Protection (kodiqa.py: `_check_workspace_boundary`)
+- Checks if tool accesses files outside the current working directory
+- Arrow-key prompt: Allow once / Allow directory / Deny
+- Remembers allowed directories for session via `self._allowed_dirs`
+- Applies to file ops, search, git tools — any tool with path parameters
+
 ### Session & State
 - `~/.kodiqa/session.json` — auto-saved conversation for crash recovery
 - `~/.kodiqa/memory.db` — SQLite persistent memory (survives across sessions)
@@ -267,3 +273,4 @@ Add the handler in `_handle_slash()` method in `kodiqa.py`. Update `/help` text.
 - Arrow-key selector for all interactive prompts (tty/termios raw input)
 - `❯` prompt with status bar (modes, accept edits state)
 - pip-installable via `pyproject.toml` with `kodiqa` console script entry point
+- Workspace boundary protection: asks before accessing files outside cwd

@@ -44,6 +44,7 @@ kodiqa
 - **Diff preview** — colored diff before every file write/edit
 - **Parallel tools** — read-only operations run concurrently
 - **Conversation recovery** — auto-saved sessions, resume on crash
+- **Workspace boundary** — asks permission before accessing files outside working directory
 - **Ollama auto-management** — starts on launch, stops on quit
 - **156 tests** — pytest test suite, all passing
 
@@ -285,6 +286,7 @@ find any bugs in this code
 
 - **Auto-approved**: reading files, listing dirs, searching, web, memory, clipboard read, undo
 - **Asks permission**: writing/editing files, running commands, git commits, delete, move, clipboard write, patches
+- **Workspace boundary**: asks before accessing files outside current working directory (Allow once / Allow directory / Deny)
 - **Blocked**: `rm -rf /`, `sudo rm`, `mkfs`, `dd`, fork bombs, etc.
 - **Permission modes**: `/mode default` (confirm all) → `/mode relaxed` (auto file ops) → `/mode auto` (no confirms)
 
@@ -307,7 +309,7 @@ find any bugs in this code
 
 ```
 ~/LLMS/kodiqa/
-  kodiqa.py          # Main agent (~3060 lines)
+  kodiqa.py          # Main agent (~3150 lines)
   actions.py         # 26 action handlers (~940 lines)
   tools.py           # Tool schemas (~460 lines)
   config.py          # Config, aliases, system prompt (~335 lines)
