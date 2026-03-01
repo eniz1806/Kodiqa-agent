@@ -373,36 +373,38 @@ find any bugs in this code
 
 ## How Kodiqa Compares
 
-| Feature | Kodiqa | Claude Code | Aider | Gemini CLI |
-|---------|--------|-------------|-------|------------|
-| **Price** | Free (Ollama) or pay-per-token | $20/mo (Pro) or pay-per-token | Pay-per-token only | Free (Gemini Flash) |
-| **Local/offline** | Yes (Ollama) | No | No | No |
-| **API providers** | 3 (Ollama, Claude, Qwen) | 1 (Claude) | 10+ (OpenAI, Claude, etc.) | 1 (Gemini) |
-| **Tools** | 26 built-in | ~15 built-in | ~10 built-in | ~12 built-in |
-| **MCP support** | Yes | Yes | No | Yes |
-| **Multi-model** | Yes (consensus mode) | No | No | No |
-| **Plan mode** | Yes | Yes | No | No |
-| **Permission modes** | 3 (default/relaxed/auto) | 2 (normal/auto) | 1 (confirm all) | 2 (normal/sandbox) |
-| **Batch edit review** | Yes (per-file accept/reject) | No | No | No |
-| **Auto model discovery** | Yes (live from APIs) | No | No | No |
-| **Budget limit** | Yes (`/budget`) | No | No | No |
-| **Auto-lint** | Yes (`/lint`) | No | Yes (built-in) | No |
-| **Auto git commit** | Yes (`/autocommit`) | Yes | Yes (default) | No |
-| **Undo** | Yes (10 levels per file) | No | Yes (git-based) | No |
-| **Conversation branching** | Yes (`/branch`) | No | No | No |
-| **Context management** | Auto-compact at 85% | Auto-compact | Repo map | Auto (1M context) |
-| **Web search** | Yes (3 engines) | No | No | Yes (Google) |
-| **Persistent memory** | Yes (SQLite) | Yes (CLAUDE.md) | No | Yes (Gemini memory) |
-| **Tab autocomplete** | Yes | Yes | No | Yes |
-| **Thinking display** | Yes (spinner + summary) | Yes | No | Yes |
-| **Project indexing** | Yes (symbol extraction) | Yes | Yes (repo map) | No |
-| **Session recovery** | Yes (auto-save) | Yes | No | No |
-| **Install** | `pip install .` | `npm install -g` | `pip install` | `npm install -g` |
-| **Language** | Python | TypeScript | Python | TypeScript |
-| **Tests** | 156 | Yes | Yes | Yes |
-| **Open source** | Yes (AGPL-3.0) | Yes (Apache-2.0) | Yes (Apache-2.0) | Yes (Apache-2.0) |
+| Feature | Kodiqa | Claude Code | Aider | Gemini CLI | OpenCode |
+|---------|--------|-------------|-------|------------|----------|
+| **Price** | Free (Ollama) or pay-per-token | $20/mo (Pro) or pay-per-token | Pay-per-token only | Free (Gemini Flash) | Pay-per-token only |
+| **Local/offline** | Yes (Ollama) | No | No | No | Yes (Ollama) |
+| **API providers** | 3 (Ollama, Claude, Qwen) | 1 (Claude) | 10+ (OpenAI, Claude, etc.) | 1 (Gemini) | 75+ (OpenAI, Claude, Gemini, Ollama, etc.) |
+| **Tools** | 26 built-in | ~15 built-in | ~10 built-in | ~12 built-in | ~12 built-in |
+| **MCP support** | Yes | Yes | No | Yes | Yes |
+| **Multi-model** | Yes (consensus mode) | No | No | No | No |
+| **Plan mode** | Yes | Yes | No | No | No |
+| **Permission modes** | 3 (default/relaxed/auto) | 2 (normal/auto) | 1 (confirm all) | 2 (normal/sandbox) | 2 (normal/auto) |
+| **Batch edit review** | Yes (per-file accept/reject) | No | No | No | No |
+| **Auto model discovery** | Yes (live from APIs) | No | No | No | No |
+| **Budget limit** | Yes (`/budget`) | No | No | No | No |
+| **Auto-lint** | Yes (`/lint`) | No | Yes (built-in) | No | No |
+| **Auto git commit** | Yes (`/autocommit`) | Yes | Yes (default) | No | No |
+| **Undo** | Yes (10 levels per file) | No | Yes (git-based) | No | No |
+| **Conversation branching** | Yes (`/branch`) | No | No | No | No |
+| **Context management** | Auto-compact at 85% | Auto-compact | Repo map | Auto (1M context) | LSP-based |
+| **Web search** | Yes (3 engines) | No | No | Yes (Google) | No |
+| **Persistent memory** | Yes (SQLite) | Yes (CLAUDE.md) | No | Yes (Gemini memory) | No |
+| **Tab autocomplete** | Yes | Yes | No | Yes | Yes |
+| **Thinking display** | Yes (spinner + summary) | Yes | No | Yes | Yes |
+| **Project indexing** | Yes (symbol extraction) | Yes | Yes (repo map) | No | Yes (LSP) |
+| **Session recovery** | Yes (auto-save) | Yes | No | No | Yes (multi-session) |
+| **Custom agents** | No | No | No | No | Yes |
+| **Desktop app / IDE** | No | Yes (VS Code) | No | No | Yes (VS Code, desktop) |
+| **Install** | `pip install .` | `npm install -g` | `pip install` | `npm install -g` | `go install` / `npm` |
+| **Language** | Python | TypeScript | Python | TypeScript | Go |
+| **Tests** | 156 | Yes | Yes | Yes | Yes |
+| **Open source** | Yes (AGPL-3.0) | Yes (Apache-2.0) | Yes (Apache-2.0) | Yes (Apache-2.0) | Yes (MIT) |
 
-**Kodiqa's unique advantages**: free local models, 3 API providers, multi-model consensus, batch edit review, conversation branching, budget limits, and auto model discovery — features no other agent offers together.
+**Kodiqa's unique advantages**: free local models, 3 API providers, multi-model consensus, batch edit review, conversation branching, budget limits, auto-lint, and auto model discovery — features no other agent offers together.
 
 ## Testing
 
