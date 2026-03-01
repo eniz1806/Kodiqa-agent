@@ -371,6 +371,39 @@ find any bugs in this code
 - Type `quit` or `exit` (no slash needed) to exit
 - Ollama starts/stops automatically — stops on cloud switch, restarts on local switch
 
+## How Kodiqa Compares
+
+| Feature | Kodiqa | Claude Code | Aider | Gemini CLI |
+|---------|--------|-------------|-------|------------|
+| **Price** | Free (Ollama) or pay-per-token | $20/mo (Pro) or pay-per-token | Pay-per-token only | Free (Gemini Flash) |
+| **Local/offline** | Yes (Ollama) | No | No | No |
+| **API providers** | 3 (Ollama, Claude, Qwen) | 1 (Claude) | 10+ (OpenAI, Claude, etc.) | 1 (Gemini) |
+| **Tools** | 26 built-in | ~15 built-in | ~10 built-in | ~12 built-in |
+| **MCP support** | Yes | Yes | No | Yes |
+| **Multi-model** | Yes (consensus mode) | No | No | No |
+| **Plan mode** | Yes | Yes | No | No |
+| **Permission modes** | 3 (default/relaxed/auto) | 2 (normal/auto) | 1 (confirm all) | 2 (normal/sandbox) |
+| **Batch edit review** | Yes (per-file accept/reject) | No | No | No |
+| **Auto model discovery** | Yes (live from APIs) | No | No | No |
+| **Budget limit** | Yes (`/budget`) | No | No | No |
+| **Auto-lint** | Yes (`/lint`) | No | Yes (built-in) | No |
+| **Auto git commit** | Yes (`/autocommit`) | Yes | Yes (default) | No |
+| **Undo** | Yes (10 levels per file) | No | Yes (git-based) | No |
+| **Conversation branching** | Yes (`/branch`) | No | No | No |
+| **Context management** | Auto-compact at 85% | Auto-compact | Repo map | Auto (1M context) |
+| **Web search** | Yes (3 engines) | No | No | Yes (Google) |
+| **Persistent memory** | Yes (SQLite) | Yes (CLAUDE.md) | No | Yes (Gemini memory) |
+| **Tab autocomplete** | Yes | Yes | No | Yes |
+| **Thinking display** | Yes (spinner + summary) | Yes | No | Yes |
+| **Project indexing** | Yes (symbol extraction) | Yes | Yes (repo map) | No |
+| **Session recovery** | Yes (auto-save) | Yes | No | No |
+| **Install** | `pip install .` | `npm install -g` | `pip install` | `npm install -g` |
+| **Language** | Python | TypeScript | Python | TypeScript |
+| **Tests** | 156 | Yes | Yes | Yes |
+| **Open source** | Yes (AGPL-3.0) | Yes (Apache-2.0) | Yes (Apache-2.0) | Yes (Apache-2.0) |
+
+**Kodiqa's unique advantages**: free local models, 3 API providers, multi-model consensus, batch edit review, conversation branching, budget limits, and auto model discovery — features no other agent offers together.
+
 ## Testing
 
 ```bash
