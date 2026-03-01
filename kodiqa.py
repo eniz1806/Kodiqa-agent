@@ -3,7 +3,16 @@
 
 import json
 import os
-import readline
+try:
+    import readline
+except ImportError:
+    import types
+    readline = types.SimpleNamespace(
+        read_history_file=lambda *a: None, write_history_file=lambda *a: None,
+        set_history_length=lambda *a: None, set_completer=lambda *a: None,
+        set_completer_delims=lambda *a: None, parse_and_bind=lambda *a: None,
+        get_line_buffer=lambda: "",
+    )
 import sys
 import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -35,6 +44,7 @@ from actions import (
 )
 from web import set_search_engine, get_search_engine, set_google_api_keys, get_google_api_keys
 from tools import CLAUDE_TOOLS
+from mcp import MCPManager
 
 # ── Error logging and API retry ──
 
@@ -146,6 +156,8 @@ class StreamWriter:
         self._header_printed = False
         self._status = None  # live status for code block progress
         self._action_depth = 0  # track [ACTION:...] blocks
+        self._in_think = False  # track <think>...</think> blocks
+        self._think_lines = 0
 
     def write(self, token):
         """Process a token. Returns the token (always appended to full_text externally)."""
@@ -164,8 +176,8 @@ class StreamWriter:
         # If pending has partial content without newline, check for fence markers
         # but don't output yet (wait for full line)
         # Exception: if not in fence and no backticks pending, flush text
-        if self._pending and not self._in_fence and not self._in_action():
-            if "```" not in self._pending and "[ACTION" not in self._pending:
+        if self._pending and not self._in_fence and not self._in_action() and not self._in_think:
+            if "```" not in self._pending and "[ACTION" not in self._pending and "<think" not in self._pending:
                 sys.stdout.write(self._pending)
                 sys.stdout.flush()
                 self._pending = ""
@@ -175,6 +187,23 @@ class StreamWriter:
 
     def _process_line(self, line):
         stripped = line.strip()
+
+        # Track <think>...</think> blocks (Qwen/local reasoning models)
+        if "<think>" in stripped and not self._in_think:
+            self._in_think = True
+            self._think_lines = 0
+            self._start_progress("Thinking")
+            return
+        if "</think>" in stripped and self._in_think:
+            self._in_think = False
+            self._stop_progress()
+            self.console.print(f"  [dim cyan]╰─ reasoning: {self._think_lines} lines[/]")
+            return
+        if self._in_think:
+            self._think_lines += 1
+            if self._status:
+                self._status.update(f"  [dim]Thinking... ({self._think_lines} lines)[/]")
+            return
 
         # Track [ACTION:...] blocks (Ollama text mode)
         if stripped.startswith("[ACTION:"):
@@ -284,13 +313,19 @@ class Kodiqa:
         self.multi_models = self._discover_models()  # default: multi-model mode
         self._auto_approved = set()  # action types auto-approved this session
         self.session_tokens = {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0, "cost": 0.0}
-        # Setup readline for arrow keys + input history
+        # Setup readline for arrow keys + input history + tab completion
         self._history_file = os.path.join(KODIQA_DIR, "input_history")
         try:
             readline.read_history_file(self._history_file)
-        except FileNotFoundError:
+        except (FileNotFoundError, OSError):
             pass
-        readline.set_history_length(500)
+        try:
+            readline.set_history_length(500)
+            readline.set_completer(self._completer)
+            readline.set_completer_delims(" \t")
+            readline.parse_and_bind("tab: complete")
+        except Exception:
+            pass
         self.qwen_key = self.settings.get("qwen_api_key", "")
         # Load Google API keys if saved
         g_key = self.settings.get("google_api_key", "")
@@ -321,6 +356,83 @@ class Kodiqa:
         self._plan_request = None
         # Edit queue: batch review mode for file edits
         self.batch_edits = True  # when True, queue edits for batch review
+        # Project index cache
+        self._project_index = {}  # {path: {"tree": ..., "symbols": ..., "timestamp": ...}}
+        # Conversation branches
+        self._branches = {}  # {name: {"history": [...], "model": ...}}
+        # MCP server manager
+        self.mcp = MCPManager()
+
+    # ── Tab Completion ──
+
+    _SLASH_COMMANDS = [
+        "/model", "/models", "/multi", "/single", "/scan", "/clear", "/compact",
+        "/memories", "/forget", "/context", "/key", "/tokens", "/config",
+        "/export", "/checkpoint", "/restore", "/env", "/verbose", "/mode",
+        "/plan", "/accept", "/search", "/cd", "/branch", "/mcp", "/help", "/quit",
+    ]
+
+    def _completer(self, text, state):
+        """Readline tab completer for slash commands and file paths."""
+        try:
+            buf = readline.get_line_buffer().lstrip()
+            if buf.startswith("/"):
+                # Slash command completion
+                if " " not in buf:
+                    # Completing the command itself
+                    matches = [c + " " for c in self._SLASH_COMMANDS if c.startswith(text)]
+                else:
+                    # Completing argument — context-aware
+                    cmd = buf.split()[0]
+                    if cmd in ("/model",):
+                        all_aliases = list(MODEL_ALIASES.keys()) + list(CLAUDE_ALIASES.keys()) + list(QWEN_ALIASES.keys())
+                        matches = [a for a in all_aliases if a.startswith(text)]
+                    elif cmd in ("/mode",):
+                        matches = [m for m in ("default", "relaxed", "auto") if m.startswith(text)]
+                    elif cmd in ("/search",):
+                        matches = [e for e in ("duckduckgo", "google", "api") if e.startswith(text)]
+                    elif cmd in ("/cd", "/scan"):
+                        matches = self._complete_path(text)
+                    elif cmd in ("/restore",):
+                        matches = [n for n in self._checkpoints.keys() if n.startswith(text)]
+                    else:
+                        matches = self._complete_path(text)
+            else:
+                # Regular text — complete file paths if it looks like a path
+                if text.startswith(("/", "~", ".")) or "/" in text:
+                    matches = self._complete_path(text)
+                else:
+                    return None
+            return matches[state] if state < len(matches) else None
+        except Exception:
+            return None
+
+    def _complete_path(self, text):
+        """Complete file/directory paths."""
+        expanded = os.path.expanduser(text)
+        if os.path.isdir(expanded) and not expanded.endswith("/"):
+            expanded += "/"
+        dirname = os.path.dirname(expanded) or "."
+        basename = os.path.basename(expanded)
+        try:
+            entries = os.listdir(dirname)
+        except OSError:
+            return []
+        matches = []
+        for entry in sorted(entries):
+            if entry.startswith(".") and not basename.startswith("."):
+                continue
+            if entry.startswith(basename):
+                full = os.path.join(dirname, entry)
+                # Replace expanded prefix back with original (keep ~ if used)
+                if text.startswith("~"):
+                    result = "~" + full[len(os.path.expanduser("~")):]
+                else:
+                    result = full
+                if os.path.isdir(full):
+                    result += "/"
+                matches.append(result)
+        return matches
 
     def _discover_models(self):
         """Auto-discover all installed Ollama models for multi-mode default."""
@@ -444,6 +556,18 @@ class Kodiqa:
         except Exception:
             info["changed_files"] = 0
             info["status_short"] = ""
+        # Capture short diff stat for context
+        try:
+            r = subprocess.run(["git", "diff", "--stat", "--no-color"], capture_output=True, text=True, cwd=self.cwd, timeout=5)
+            info["diff_stat"] = r.stdout.strip()[:500] if r.stdout.strip() else ""
+        except Exception:
+            info["diff_stat"] = ""
+        # Capture staged diff stat
+        try:
+            r = subprocess.run(["git", "diff", "--staged", "--stat", "--no-color"], capture_output=True, text=True, cwd=self.cwd, timeout=5)
+            info["staged_stat"] = r.stdout.strip()[:500] if r.stdout.strip() else ""
+        except Exception:
+            info["staged_stat"] = ""
         self.git_info = info
 
     def _git_context(self):
@@ -451,10 +575,16 @@ class Kodiqa:
         if not self.git_info:
             return ""
         g = self.git_info
-        lines = [f"## Git Repository"]
+        lines = ["## Git Repository"]
         lines.append(f"- Branch: {g['branch']}")
         if g["changed_files"]:
             lines.append(f"- Uncommitted changes: {g['changed_files']} files")
+            if g.get("status_short"):
+                lines.append(f"```\n{g['status_short']}\n```")
+        if g.get("diff_stat"):
+            lines.append(f"- Unstaged diff:\n```\n{g['diff_stat']}\n```")
+        if g.get("staged_stat"):
+            lines.append(f"- Staged diff:\n```\n{g['staged_stat']}\n```")
         if g["recent_commits"]:
             lines.append(f"- Recent commits:\n```\n{g['recent_commits']}\n```")
         return "\n".join(lines)
@@ -564,6 +694,7 @@ class Kodiqa:
     def _quit(self):
         self._save_session()
         self.memory.close()
+        self.mcp.stop_all()
         try:
             readline.write_history_file(self._history_file)
         except Exception:
@@ -776,6 +907,8 @@ class Kodiqa:
                 "[bold]/accept[/]        - Toggle batch edit review (accept/reject per file)\n"
                 "[bold]/search[/]        - Switch search engine (google/duckduckgo)\n"
                 "[bold]/cd <path>[/]     - Change working directory\n"
+                "[bold]/branch[/]        - Save/switch/list conversation branches\n"
+                "[bold]/mcp[/]           - Manage MCP tool servers (add/remove/list)\n"
                 "[bold]/quit[/]          - Exit",
                 title="Commands", border_style="blue",
             ))
@@ -968,15 +1101,20 @@ class Kodiqa:
         elif command == "/tokens":
             st = self.session_tokens
             # Estimate context usage
-            ctx_chars = sum(len(str(m.get("content", ""))) for m in self.history)
-            ctx_est = ctx_chars // 4
+            ctx_est = self._estimate_tokens()
+            limit = self._context_limit()
+            pct = ctx_est * 100 // limit if limit > 0 else 0
+            bar_len = 20
+            filled = pct * bar_len // 100
+            bar = "[green]" + "█" * filled + "[/][dim]" + "░" * (bar_len - filled) + "[/]"
             self.console.print(Panel(
                 f"Input tokens:  {st['input']:,}\n"
                 f"Output tokens: {st['output']:,}\n"
                 f"Cache read:    {st['cache_read']:,}\n"
                 f"Cache create:  {st['cache_creation']:,}\n"
                 f"Total cost:    ${st['cost']:.4f}\n"
-                f"Context est:   ~{ctx_est:,} tokens ({len(self.history)} messages)",
+                f"Context:       ~{ctx_est:,} / {limit:,} tokens ({pct}%)\n"
+                f"               {bar} {len(self.history)} messages",
                 title="Session Token Usage", border_style="blue",
             ))
         elif command == "/export":
@@ -1046,6 +1184,10 @@ class Kodiqa:
                 self.console.print("[green]Batch edit review ON[/] — edits queued for review before applying")
             else:
                 self.console.print("[yellow]Batch edit review OFF[/] — edits applied one at a time")
+        elif command == "/branch":
+            self._handle_branch(arg.strip())
+        elif command == "/mcp":
+            self._handle_mcp(arg.strip())
         else:
             self.console.print(f"[red]Unknown command: {command}. Type /help[/]")
 
@@ -1146,6 +1288,8 @@ class Kodiqa:
         files_content = []
         total_chars = 0
         file_count = 0
+        symbols = []  # extracted function/class definitions
+        file_list = []  # for index cache
         scan_status = Status(f"  [dim]Scanning {path}...[/]", console=self.console, spinner="dots")
         scan_status.start()
         for root, dirs, files in os.walk(path):
@@ -1162,9 +1306,16 @@ class Kodiqa:
                     with open(fpath, "r", errors="replace") as f:
                         content = f.read()
                     rel = os.path.relpath(fpath, path)
+                    file_list.append({"path": rel, "size": size, "lines": content.count("\n") + 1})
                     files_content.append(f"### {rel}\n```\n{content}\n```")
                     total_chars += len(content)
                     file_count += 1
+                    # Extract symbols (functions, classes)
+                    for i, line in enumerate(content.splitlines(), 1):
+                        stripped = line.strip()
+                        if stripped.startswith(("def ", "class ", "function ", "export function ", "export class ", "export default ")):
+                            sym_name = stripped.split("(")[0].split(":")[0].strip()
+                            symbols.append(f"{rel}:{i}: {sym_name}")
                     scan_status.update(f"  [dim]Scanning... {file_count} files ({total_chars:,} chars)[/]")
                     if total_chars > 500_000:
                         files_content.append("... (stopped, context limit)")
@@ -1177,10 +1328,24 @@ class Kodiqa:
         if not files_content:
             self.console.print("[yellow]No readable files found.[/]")
             return
-        scan_text = f"Project scan of {path} ({file_count} files):\n\n" + "\n\n".join(files_content)
+        # Cache the index
+        self._project_index[path] = {
+            "files": file_list,
+            "symbols": symbols[:200],  # cap at 200
+            "file_count": file_count,
+            "total_chars": total_chars,
+            "timestamp": time.time(),
+        }
+        # Build scan text with symbols summary
+        scan_text = f"Project scan of {path} ({file_count} files):\n\n"
+        if symbols:
+            scan_text += "## Key Symbols\n" + "\n".join(symbols[:100]) + "\n\n"
+        scan_text += "\n\n".join(files_content)
         self.history.append({"role": "user", "content": f"[Project scan of {path}]"})
         self.history.append({"role": "assistant", "content": scan_text})
         self.console.print(f"[green]Scanned {file_count} files ({total_chars:,} chars) into context.[/]")
+        if symbols:
+            self.console.print(f"[dim]  Indexed {len(symbols)} symbols (functions/classes)[/]")
 
     def _compact(self):
         if len(self.history) < 4:
@@ -1230,18 +1395,30 @@ class Kodiqa:
                         total += len(str(block.get("content", "")))
         return total // 4
 
-    def _auto_compact_if_needed(self):
-        """Auto-compact when context approaches provider limit."""
-        tokens = self._estimate_tokens()
+    def _context_limit(self):
+        """Get context window limit for current model."""
         if is_claude_model(self.model):
-            threshold = 150_000
+            return 200_000
         elif is_qwen_api_model(self.model):
-            threshold = 800_000
+            return 1_000_000
         else:
-            threshold = self.config.get("auto_compact_threshold", 80000)
-        if tokens > threshold:
-            self.console.print(f"[dim]Context large (~{tokens:,} tokens, limit ~{threshold:,}). Auto-compacting...[/]")
+            return self.config.get("auto_compact_threshold", 80000) * 2  # rough Ollama limit
+
+    def _auto_compact_if_needed(self):
+        """Auto-compact when context approaches provider limit. Warn at 70%, compact at 85%."""
+        try:
+            tokens = self._estimate_tokens()
+            limit = self._context_limit()
+        except Exception:
+            return
+        warn_threshold = int(limit * 0.70)
+        compact_threshold = int(limit * 0.85)
+        if tokens > compact_threshold:
+            self.console.print(f"[yellow]Context at ~{tokens:,}/{limit:,} tokens ({tokens*100//limit}%). Auto-compacting...[/]")
             self._compact()
+        elif tokens > warn_threshold:
+            pct = tokens * 100 // limit
+            self.console.print(f"[dim yellow]Context: ~{tokens:,}/{limit:,} tokens ({pct}%). Use /compact if responses degrade.[/]")
 
     # ── Main chat dispatch ──
 
@@ -1721,19 +1898,30 @@ class Kodiqa:
                 set_batch_mode(True)
 
             # Execute tools - parallel for read-only, sequential for writes
-            if len(tool_calls) > 1:
-                with Status(f"  [yellow]●[/] Running {len(tool_calls)} tools...", console=self.console, spinner="dots"):
-                    results_list = execute_tools_parallel(tool_calls, self.memory, self._confirm)
+            # Split MCP tools from regular tools
+            mcp_calls = [tc for tc in tool_calls if tc["name"].startswith("mcp_")]
+            regular_calls = [tc for tc in tool_calls if not tc["name"].startswith("mcp_")]
+            results_list = []
+            if len(regular_calls) > 1:
+                with Status(f"  [yellow]●[/] Running {len(regular_calls)} tools...", console=self.console, spinner="dots"):
+                    results_list = execute_tools_parallel(regular_calls, self.memory, self._confirm)
                 for tc_id, result in results_list:
-                    tc_name = next((tc["name"] for tc in tool_calls if tc["id"] == tc_id), "?")
-                    tc_input = next((tc.get("input", {}) for tc in tool_calls if tc["id"] == tc_id), {})
+                    tc_name = next((tc["name"] for tc in regular_calls if tc["id"] == tc_id), "?")
+                    tc_input = next((tc.get("input", {}) for tc in regular_calls if tc["id"] == tc_id), {})
                     self.console.print(f"  [green]●[/] {_tool_label(tc_name, tc_input)}")
-            else:
-                results_list = []
-                tc = tool_calls[0]
+            elif len(regular_calls) == 1:
+                tc = regular_calls[0]
                 label = _tool_label(tc['name'], tc.get('input', {}))
                 with Status(f"  [yellow]●[/] {label}", console=self.console, spinner="dots"):
-                    result = execute_tool_call(tc["name"], tc["input"], self.memory, self._confirm)
+                    result = self._execute_tool(tc["name"], tc["input"])
+                    if len(result) > 20000:
+                        result = result[:20000] + "\n... (truncated)"
+                    results_list.append((tc["id"], result))
+                self.console.print(f"  [green]●[/] {label}")
+            for tc in mcp_calls:
+                label = _tool_label(tc["name"], tc.get("input", {}))
+                with Status(f"  [yellow]●[/] {label}", console=self.console, spinner="dots"):
+                    result = self.mcp.call_tool(tc["name"], tc.get("input", {}))
                     if len(result) > 20000:
                         result = result[:20000] + "\n... (truncated)"
                     results_list.append((tc["id"], result))
@@ -1820,7 +2008,7 @@ class Kodiqa:
         # Prompt caching: system as blocks with cache_control
         system_blocks = [{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}]
         # Cache the tool definitions too
-        cached_tools = [dict(t) for t in CLAUDE_TOOLS]
+        cached_tools = [dict(t) for t in self._get_all_tools()]
         cached_tools[-1] = dict(cached_tools[-1])
         cached_tools[-1]["cache_control"] = {"type": "ephemeral"}
 
@@ -1981,10 +2169,22 @@ class Kodiqa:
 
     # ── Qwen API chat (OpenAI-compatible with tool calling) ──
 
+    def _execute_tool(self, name, params):
+        """Execute a tool call, routing MCP tools to MCP manager."""
+        if name.startswith("mcp_"):
+            return self.mcp.call_tool(name, params or {})
+        return execute_tool_call(name, params, self.memory, self._confirm)
+
+    def _get_all_tools(self):
+        """Get all tools: built-in + MCP server tools."""
+        tools = list(CLAUDE_TOOLS)
+        tools.extend(self.mcp.get_all_tools())
+        return tools
+
     def _get_qwen_tools(self):
         """Convert Claude tool schemas to OpenAI function-calling format for Qwen."""
         tools = []
-        for t in CLAUDE_TOOLS:
+        for t in self._get_all_tools():
             tools.append({
                 "type": "function",
                 "function": {
@@ -2041,20 +2241,30 @@ class Kodiqa:
             if self.batch_edits:
                 set_batch_mode(True)
 
-            # Execute tools (reuse Claude's parallel execution)
-            if len(tool_calls) > 1:
-                with Status(f"  [yellow]●[/] Running {len(tool_calls)} tools...", console=self.console, spinner="dots"):
-                    results_list = execute_tools_parallel(tool_calls, self.memory, self._confirm)
+            # Execute tools — split MCP from regular
+            mcp_calls = [tc for tc in tool_calls if tc["name"].startswith("mcp_")]
+            regular_calls = [tc for tc in tool_calls if not tc["name"].startswith("mcp_")]
+            results_list = []
+            if len(regular_calls) > 1:
+                with Status(f"  [yellow]●[/] Running {len(regular_calls)} tools...", console=self.console, spinner="dots"):
+                    results_list = execute_tools_parallel(regular_calls, self.memory, self._confirm)
                 for tc_id, result in results_list:
-                    tc_name = next((tc["name"] for tc in tool_calls if tc["id"] == tc_id), "?")
-                    tc_input = next((tc.get("input", {}) for tc in tool_calls if tc["id"] == tc_id), {})
+                    tc_name = next((tc["name"] for tc in regular_calls if tc["id"] == tc_id), "?")
+                    tc_input = next((tc.get("input", {}) for tc in regular_calls if tc["id"] == tc_id), {})
                     self.console.print(f"  [green]●[/] {_tool_label(tc_name, tc_input)}")
-            else:
-                results_list = []
-                tc = tool_calls[0]
+            elif len(regular_calls) == 1:
+                tc = regular_calls[0]
                 label = _tool_label(tc["name"], tc.get("input", {}))
                 with Status(f"  [yellow]●[/] {label}", console=self.console, spinner="dots"):
-                    result = execute_tool_call(tc["name"], tc["input"], self.memory, self._confirm)
+                    result = self._execute_tool(tc["name"], tc["input"])
+                    if len(result) > 20000:
+                        result = result[:20000] + "\n... (truncated)"
+                    results_list.append((tc["id"], result))
+                self.console.print(f"  [green]●[/] {label}")
+            for tc in mcp_calls:
+                label = _tool_label(tc["name"], tc.get("input", {}))
+                with Status(f"  [yellow]●[/] {label}", console=self.console, spinner="dots"):
+                    result = self.mcp.call_tool(tc["name"], tc.get("input", {}))
                     if len(result) > 20000:
                         result = result[:20000] + "\n... (truncated)"
                     results_list.append((tc["id"], result))
@@ -2468,6 +2678,90 @@ class Kodiqa:
                 self.console.print(f"  [red]Failed to restore checkpoint: {e}[/]")
         else:
             self.console.print(f"  [red]Checkpoint '{name}' not found.[/]")
+
+    def _handle_branch(self, arg):
+        """Handle /branch commands: create, list, switch, delete."""
+        import copy
+        if not arg or arg == "list":
+            if not self._branches:
+                self.console.print("[dim]No branches. Use /branch save <name> to create one.[/]")
+            else:
+                self.console.print("[bold]Conversation branches:[/]")
+                for name, data in self._branches.items():
+                    msgs = len(data["history"])
+                    model = data.get("model", "?")
+                    self.console.print(f"  [cyan]{name}[/] ({msgs} messages, model: {model})")
+            return
+        parts = arg.split(None, 1)
+        subcmd = parts[0].lower()
+        name = parts[1] if len(parts) > 1 else ""
+
+        if subcmd == "save":
+            if not name:
+                name = f"branch_{len(self._branches) + 1}"
+            self._branches[name] = {
+                "history": copy.deepcopy(self.history),
+                "model": self.model,
+            }
+            self.console.print(f"  [green]Branch '{name}' saved ({len(self.history)} messages)[/]")
+        elif subcmd == "switch":
+            if not name or name not in self._branches:
+                self.console.print(f"  [red]Branch '{name}' not found. Use /branch list[/]")
+                return
+            # Save current as "_previous" auto-branch
+            self._branches["_previous"] = {
+                "history": copy.deepcopy(self.history),
+                "model": self.model,
+            }
+            data = self._branches[name]
+            self.history = copy.deepcopy(data["history"])
+            self.model = data.get("model", self.model)
+            self.console.print(f"  [green]Switched to branch '{name}' ({len(self.history)} messages)[/]")
+            self.console.print(f"  [dim]Previous state saved as '_previous'[/]")
+        elif subcmd == "delete":
+            if name in self._branches:
+                del self._branches[name]
+                self.console.print(f"  [dim]Branch '{name}' deleted.[/]")
+            else:
+                self.console.print(f"  [red]Branch '{name}' not found.[/]")
+        else:
+            self.console.print("[dim]Usage: /branch save <name> | /branch switch <name> | /branch delete <name> | /branch list[/]")
+
+    def _handle_mcp(self, arg):
+        """Handle /mcp commands: add, remove, list."""
+        if not arg or arg == "list":
+            info = self.mcp.list_servers()
+            self.console.print(Panel(info, title="MCP Servers", border_style="blue"))
+            return
+        parts = arg.split(None, 2)
+        subcmd = parts[0].lower()
+
+        if subcmd == "add":
+            if len(parts) < 3:
+                self.console.print("[dim]Usage: /mcp add <name> <command> [args...][/]")
+                return
+            name = parts[1]
+            cmd_parts = parts[2].split()
+            command = cmd_parts[0]
+            cmd_args = cmd_parts[1:] if len(cmd_parts) > 1 else []
+            with Status(f"  [dim]Connecting to MCP server '{name}'...[/]", console=self.console, spinner="dots"):
+                tools = self.mcp.add_server(name, command, cmd_args)
+            if tools is not None:
+                tool_names = [t["name"] for t in tools]
+                self.console.print(f"  [green]Connected: {name}[/] ({len(tools)} tools: {', '.join(tool_names[:5])})")
+            else:
+                self.console.print(f"  [red]Failed to connect to '{name}'[/]")
+        elif subcmd == "remove":
+            if len(parts) < 2:
+                self.console.print("[dim]Usage: /mcp remove <name>[/]")
+                return
+            name = parts[1]
+            if self.mcp.remove_server(name):
+                self.console.print(f"  [dim]Disconnected: {name}[/]")
+            else:
+                self.console.print(f"  [red]Server '{name}' not found.[/]")
+        else:
+            self.console.print("[dim]Usage: /mcp add <name> <command> | /mcp remove <name> | /mcp list[/]")
 
     def _confirm(self, description):
         self.console.print()

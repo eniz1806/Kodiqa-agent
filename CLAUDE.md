@@ -1,17 +1,18 @@
 # Kodiqa - Local AI Coding Agent
 
 ## What This Is
-A Claude Code clone that runs 100% locally using free Ollama models, with optional Claude API and Qwen API for smarter responses. Python CLI agent with multi-model consensus, 26 tools, 3 permission modes, plan mode, batch edit review, web search, persistent memory, compact streaming, and full filesystem access.
+A Claude Code clone that runs 100% locally using free Ollama models, with optional Claude API and Qwen API for smarter responses. Python CLI agent with multi-model consensus, 26 tools, MCP server support, 3 permission modes, plan mode, batch edit review, tab autocomplete, context window management, conversation branching, thinking display, web search, persistent memory, compact streaming, and full filesystem access.
 
 ## Architecture
 
 ```
-kodiqa.py  (~2580 lines)  Main agent: Kodiqa class, StreamWriter, chat loops, slash commands, modes, Ollama + Claude + Qwen API
+kodiqa.py  (~2870 lines)  Main agent: Kodiqa class, StreamWriter, chat loops, slash commands, modes, MCP, branching, Ollama + Claude + Qwen API
 actions.py (~940 lines)   26 action handlers: file ops, git, search, web, memory, clipboard, multi_edit, edit queue + diff preview
 tools.py   (~460 lines)   Tool schemas (Claude native format, converted to OpenAI format for Qwen)
 config.py  (~290 lines)   Constants, model aliases (Ollama/Claude/Qwen), system prompt, user-editable config
 web.py     (~195 lines)   3 search engines (DuckDuckGo, Google scrape, Google API) + page fetcher
 memory.py  (82 lines)     SQLite-backed persistent memory store
+mcp.py     (~175 lines)   MCP client: MCPServer (stdio JSON-RPC transport) + MCPManager (multi-server)
 ```
 
 ## Triple-Mode Design
