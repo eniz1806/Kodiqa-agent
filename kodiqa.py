@@ -1621,12 +1621,6 @@ class Kodiqa:
 
         self.console.print()
         total = len(queue)
-        self.console.print(Panel(
-            f"[bold]{total} file edit{'s' if total > 1 else ''}[/] queued for review.\n\n"
-            "  [cyan bold]a[/] accept    [cyan bold]r[/] reject    [cyan bold]A[/] accept all    [cyan bold]R[/] reject all\n"
-            "  [cyan bold]n[/] next      [cyan bold]p[/] prev      [cyan bold]d[/] show diff     [cyan bold]q[/] finish",
-            border_style="green", title="Edit Review",
-        ))
 
         decisions = [None] * total  # None = pending, True = accepted, False = rejected
         current = 0
@@ -1636,6 +1630,8 @@ class Kodiqa:
             path = entry["path"]
             etype = entry["type"]
             desc = entry["description"]
+            old = entry.get("old_content", "")
+            new = entry.get("new_content", "")
 
             # Status indicator
             status_icon = "[dim]?[/]"
@@ -1644,68 +1640,50 @@ class Kodiqa:
             elif decisions[current] is False:
                 status_icon = "[red]✗[/]"
 
-            self.console.print(
-                f"\n  {status_icon} [bold]({current + 1}/{total})[/] [cyan]{os.path.basename(path)}[/] "
-                f"[dim]— {etype}: {desc}[/]"
-            )
-
-            # Show summary
-            old = entry.get("old_content", "")
-            new = entry.get("new_content", "")
+            # File summary
             if old:
                 old_lines = len(old.splitlines())
                 new_lines = len(new.splitlines())
                 added = max(0, new_lines - old_lines)
                 removed = max(0, old_lines - new_lines)
-                self.console.print(f"    [green]+{added}[/] [red]-{removed}[/] lines | {len(new):,} chars")
+                change_desc = f"[green]+{added}[/] [red]-{removed}[/] lines"
             else:
-                self.console.print(f"    [green]+ new file[/] | {len(new):,} chars")
+                change_desc = "[green]+ new file[/]"
 
-            try:
-                choice = Prompt.ask(
-                    f"  [bold green]({current + 1}/{total})[/]",
-                    default="a"
-                ).strip().lower()
-            except (EOFError, KeyboardInterrupt):
-                choice = "q"
+            self.console.print(
+                f"\n  {status_icon} [bold]({current + 1}/{total})[/] [cyan]{os.path.basename(path)}[/] "
+                f"[dim]— {etype}[/]  {change_desc}"
+            )
 
-            if choice == "a":
+            options = [
+                ("Accept", ""),
+                ("Reject", ""),
+                ("Show diff", ""),
+                ("Accept all", f"remaining {sum(1 for d in decisions if d is None)} edits"),
+                ("Reject all", ""),
+            ]
+            choice = self._arrow_select(options, self.console, default=0)
+
+            if choice == 0:  # Accept
                 decisions[current] = True
                 self.console.print(f"    [green]✓ Accepted[/]")
                 if current < total - 1:
                     current += 1
                 elif all(d is not None for d in decisions):
                     break
-            elif choice == "r":
+            elif choice == 1:  # Reject
                 decisions[current] = False
                 self.console.print(f"    [red]✗ Rejected[/]")
                 if current < total - 1:
                     current += 1
                 elif all(d is not None for d in decisions):
                     break
-            elif choice.upper() == "A":
-                for i in range(total):
-                    if decisions[i] is None:
-                        decisions[i] = True
-                self.console.print(f"  [green]✓ All {total} edits accepted[/]")
-                break
-            elif choice.upper() == "R":
-                for i in range(total):
-                    if decisions[i] is None:
-                        decisions[i] = False
-                self.console.print(f"  [red]✗ All {total} edits rejected[/]")
-                break
-            elif choice == "n":
-                current = (current + 1) % total
-            elif choice == "p":
-                current = (current - 1) % total
-            elif choice == "d":
-                # Show full diff
+            elif choice == 2:  # Show diff
                 import difflib
-                old_lines = old.splitlines(keepends=True) if old else []
-                new_lines = new.splitlines(keepends=True)
+                old_lines_list = old.splitlines(keepends=True) if old else []
+                new_lines_list = new.splitlines(keepends=True)
                 diff = difflib.unified_diff(
-                    old_lines, new_lines,
+                    old_lines_list, new_lines_list,
                     fromfile=f"a/{os.path.basename(path)}",
                     tofile=f"b/{os.path.basename(path)}",
                 )
@@ -1724,11 +1702,17 @@ class Kodiqa:
                         self.console.print(f"    [dim]{line}[/]")
                 if len(diff_text) > 80:
                     self.console.print(f"    [dim]... ({len(diff_text) - 80} more lines)[/]")
-            elif choice == "q":
-                # Mark remaining as rejected
+            elif choice == 3:  # Accept all
+                for i in range(total):
+                    if decisions[i] is None:
+                        decisions[i] = True
+                self.console.print(f"  [green]✓ All {total} edits accepted[/]")
+                break
+            elif choice == 4:  # Reject all
                 for i in range(total):
                     if decisions[i] is None:
                         decisions[i] = False
+                self.console.print(f"  [red]✗ All {total} edits rejected[/]")
                 break
 
         # Apply accepted edits
@@ -1753,20 +1737,19 @@ class Kodiqa:
     def _show_plan_approval(self):
         """Show plan approval panel after AI has written a plan."""
         self.console.print()
-        self.console.print(Panel(
-            "[bold]Plan complete![/] Review the plan above, then choose:\n\n"
-            "  [cyan bold]1.[/] [bold]Approve[/] — implement the plan now\n"
-            "  [cyan bold]2.[/] [bold]Revise[/] — give feedback and get a revised plan\n"
-            "  [cyan bold]3.[/] [bold]Reject[/] — cancel and exit plan mode",
-            border_style="magenta", title="Plan Approval",
-        ))
+        self.console.print("  [bold magenta]Plan complete![/] Review the plan above:")
+        options = [
+            ("Approve", "implement the plan now"),
+            ("Revise", "give feedback and re-plan"),
+            ("Reject", "cancel and exit plan mode"),
+        ]
         try:
-            choice = Prompt.ask("[bold magenta]Choice[/]", choices=["1", "2", "3"], default="1")
-            if choice == "1":
+            choice = self._arrow_select(options, self.console, default=0)
+            if choice == 0:
                 self._pending_plan = "approved"
                 self.console.print("[green]Plan approved! Implementing...[/]")
                 self._chat("")  # Trigger phase 2
-            elif choice == "2":
+            elif choice == 1:
                 self._pending_plan = None  # Reset to allow re-plan
                 feedback = input("\033[1;35m❯ \033[0m")
                 if feedback.strip():
@@ -2905,6 +2888,69 @@ class Kodiqa:
         else:
             self.console.print("[dim]Usage: /mcp add <name> <command> | /mcp remove <name> | /mcp list[/]")
 
+    @staticmethod
+    def _arrow_select(options, console, default=0):
+        """Arrow-key selector. Returns index of chosen option. Options: list of (label, description)."""
+        import tty, termios
+        selected = default
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+
+        def render():
+            # Move cursor up to overwrite previous render (except first time)
+            for i, (label, desc) in enumerate(options):
+                if i == selected:
+                    console.print(f"    [bold cyan]❯[/] [bold]{label}[/]{' [dim]' + desc + '[/]' if desc else ''}")
+                else:
+                    console.print(f"      [dim]{label}{' — ' + desc if desc else ''}[/]")
+
+        def clear_options():
+            # Move up and clear each line
+            n = len(options)
+            sys.stdout.write(f"\033[{n}A")  # move up
+            for _ in range(n):
+                sys.stdout.write("\033[2K\n")  # clear line
+            sys.stdout.write(f"\033[{n}A")  # move back up
+            sys.stdout.flush()
+
+        try:
+            render()
+            tty.setraw(fd)
+            while True:
+                ch = sys.stdin.read(1)
+                if ch == "\r" or ch == "\n":  # Enter
+                    break
+                elif ch == "\x03":  # Ctrl+C
+                    selected = len(options) - 1  # select last (usually No/cancel)
+                    break
+                elif ch == "\x1b":  # Escape sequence
+                    ch2 = sys.stdin.read(1)
+                    if ch2 == "[":
+                        ch3 = sys.stdin.read(1)
+                        if ch3 == "A":  # Up
+                            selected = (selected - 1) % len(options)
+                        elif ch3 == "B":  # Down
+                            selected = (selected + 1) % len(options)
+                elif ch == "k":  # vim up
+                    selected = (selected - 1) % len(options)
+                elif ch == "j":  # vim down
+                    selected = (selected + 1) % len(options)
+                elif ch in ("1", "2", "3", "4", "5"):
+                    idx = int(ch) - 1
+                    if idx < len(options):
+                        selected = idx
+                        break
+                # Re-render
+                termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+                clear_options()
+                render()
+                tty.setraw(fd)
+        except (EOFError, OSError):
+            pass
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        return selected
+
     def _confirm(self, description):
         self.console.print()
         # Extract action type from description (e.g. "Write file: ..." -> "write file")
@@ -2931,13 +2977,15 @@ class Kodiqa:
 
         try:
             self.console.print(f"  [bold yellow]Allow:[/] {description}")
-            self.console.print(f"    [cyan bold]1.[/] [bold]Yes[/]")
-            self.console.print(f"    [cyan bold]2.[/] [bold]Yes, don't ask again[/] [dim](for this action type)[/]")
-            self.console.print(f"    [cyan bold]3.[/] [bold]No[/]")
-            choice = Prompt.ask("  [bold yellow]Choice[/]", choices=["1", "2", "3"], default="1")
-            if choice == "1":
+            options = [
+                ("Yes", ""),
+                ("Yes, don't ask again", "for this action type"),
+                ("No", ""),
+            ]
+            choice = self._arrow_select(options, self.console, default=0)
+            if choice == 0:
                 return True
-            elif choice == "2":
+            elif choice == 1:
                 self._auto_approved.add(action_type)
                 self.console.print(f"  [dim]Auto-approving future \"{action_type}\" actions this session.[/]")
                 return True
