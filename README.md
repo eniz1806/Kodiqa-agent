@@ -45,7 +45,8 @@ kodiqa
 - **Parallel tools** — read-only operations run concurrently
 - **Conversation recovery** — auto-saved sessions, resume on crash
 - **Workspace boundary** — asks permission before accessing files outside working directory
-- **Ollama auto-management** — starts on launch, stops on quit
+- **Smart Ollama lifecycle** — starts on launch, stops when switching to cloud, restarts on local switch
+- **Dynamic model library** — fetches available Ollama models from ollama.com with pull counts
 - **156 tests** — pytest test suite, all passing
 
 ## Arrow-Key UI
@@ -309,7 +310,7 @@ find any bugs in this code
 
 ```
 ~/LLMS/kodiqa/
-  kodiqa.py          # Main agent (~3135 lines)
+  kodiqa.py          # Main agent (~3195 lines)
   actions.py         # 26 action handlers (~950 lines)
   tools.py           # Tool schemas (~460 lines)
   config.py          # Config, aliases, system prompt (~335 lines)
@@ -354,7 +355,7 @@ find any bugs in this code
 - Memories persist forever across sessions
 - Arrow keys work: up/down for history, left/right to edit
 - Sessions auto-save — restart if anything goes wrong
-- Ollama starts and stops automatically
+- Ollama starts/stops automatically — stops on cloud switch, restarts on local switch
 
 ## Testing
 
@@ -365,7 +366,7 @@ pytest -v          # 156 tests, all passing
 ## Requirements
 
 - Python 3.9+
-- Ollama installed (`/Applications/Ollama.app` on macOS)
-- At least one model pulled (`ollama pull qwen3-coder`)
+- Ollama installed (`/Applications/Ollama.app` on macOS) — or just use API models
+- Models pulled automatically on first run, or `ollama pull qwen3-coder`
 - (Optional) Claude API key for Claude models
 - (Optional) DashScope API key for Qwen API models

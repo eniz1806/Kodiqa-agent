@@ -6,7 +6,7 @@ A Claude Code clone that runs 100% locally using free Ollama models, with option
 ## Architecture
 
 ```
-kodiqa.py  (~3135 lines)  Main agent: Kodiqa class, StreamWriter, KodiqaCompleter, prompt_toolkit UI, chat loops, slash commands, modes, MCP, branching, auto-discovery, workspace boundary
+kodiqa.py  (~3195 lines)  Main agent: Kodiqa class, StreamWriter, KodiqaCompleter, prompt_toolkit UI, chat loops, slash commands, modes, MCP, branching, auto-discovery, workspace boundary
 actions.py (~950 lines)   26 action handlers: file ops, git, search, web, memory, clipboard, multi_edit, edit queue + diff preview
 tools.py   (~460 lines)   Tool schemas (Claude native format, converted to OpenAI format for Qwen)
 config.py  (~335 lines)   Constants, model aliases (all Claude 4.6/4.5/4 + Qwen 3.5/3), system prompt, config
@@ -75,9 +75,20 @@ tests/           156 tests, all passing (~0.25s)
 
 ### Auto Model Discovery
 - `_fetch_api_models()` fetches live model lists from Claude and Qwen API endpoints
+- `_fetch_ollama_library()` scrapes ollama.com/library for available models (name, desc, pulls)
 - Cached for 10 minutes to avoid repeated API calls
 - New models appear automatically in `/model` picker and `/models` list
 - Live models shown as "(live)" — usable by full model ID
+
+### Ollama Lifecycle (kodiqa.py)
+- `_ensure_ollama()` — starts Ollama if not running, tracks `_ollama_started_by_us`
+- `_stop_ollama()` — stops only if we started it
+- `_check_updates()` — checks installed models for updates, fetches available models from ollama.com
+- Always starts Ollama on launch + checks updates
+- Stops Ollama when switching to cloud model (Claude/Qwen API)
+- Restarts + checks updates when switching back to local model
+- Stops on quit if we started it
+- Welcome detects missing local models, guides user to pull or add API key
 
 ### Prompt UI (kodiqa.py: prompt_toolkit + `_arrow_select`)
 - Claude Code-style `❯` prompt with separator line, powered by `prompt_toolkit`
