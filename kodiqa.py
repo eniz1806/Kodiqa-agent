@@ -1987,7 +1987,10 @@ class Kodiqa:
             for action in actions:
                 action_label = _tool_label(action['name'], action.get('params', {}))
                 with Status(f"  [yellow]●[/] {action_label}", console=self.console, spinner="dots"):
-                    result = execute_action(action, self.memory, self._confirm)
+                    if not self._check_workspace_boundary(action['name'], action.get('params', {})):
+                        result = "Denied: file is outside the workspace directory."
+                    else:
+                        result = execute_action(action, self.memory, self._confirm)
                     if len(result) > 20000:
                         result = result[:20000] + "\n... (truncated)"
                     results.append(f"[Result of {action['name']}]\n{result}")
@@ -2327,10 +2330,61 @@ class Kodiqa:
 
     # ── Qwen API chat (OpenAI-compatible with tool calling) ──
 
+    def _check_workspace_boundary(self, name, params):
+        """Check if a tool accesses files outside the workspace. Returns True if allowed."""
+        # Tools that access file paths
+        path_params = {
+            "read_file": ["path"], "write_file": ["path"], "edit_file": ["path"],
+            "multi_edit": ["path"], "search_replace_all": ["path"],
+            "delete_file": ["path"], "move_file": ["source", "destination"],
+            "list_dir": ["path"], "tree": ["path"], "glob": ["path"],
+            "grep": ["path"], "read_image": ["path"], "read_pdf": ["path"],
+            "create_directory": ["path"], "diff_apply": ["path"],
+        }
+        if name not in path_params or not params:
+            return True
+        workspace = os.path.abspath(self.cwd)
+        if not hasattr(self, "_allowed_dirs"):
+            self._allowed_dirs = set()
+        for key in path_params[name]:
+            file_path = params.get(key, "")
+            if not file_path:
+                continue
+            abs_path = os.path.abspath(os.path.expanduser(file_path))
+            # Check if path is inside workspace
+            if abs_path.startswith(workspace + "/") or abs_path == workspace:
+                continue
+            # Check if already allowed
+            if any(abs_path.startswith(d + "/") or abs_path == d for d in self._allowed_dirs):
+                continue
+            # Ask permission
+            parent_dir = os.path.dirname(abs_path)
+            try:
+                self.console.print(f"\n  [bold yellow]Outside workspace:[/] {abs_path}")
+                self.console.print(f"  [dim]Workspace: {workspace}[/]")
+                options = [
+                    ("Allow once", ""),
+                    ("Allow this directory", f"always allow {parent_dir}"),
+                    ("Deny", ""),
+                ]
+                choice = self._arrow_select(options, self.console, default=0)
+                if choice == 0:
+                    pass  # allow once
+                elif choice == 1:
+                    self._allowed_dirs.add(parent_dir)
+                    self.console.print(f"  [dim]Directory allowed for this session.[/]")
+                else:
+                    return False
+            except (EOFError, KeyboardInterrupt):
+                return False
+        return True
+
     def _execute_tool(self, name, params):
         """Execute a tool call, routing MCP tools to MCP manager."""
         if name.startswith("mcp_"):
             return self.mcp.call_tool(name, params or {})
+        if not self._check_workspace_boundary(name, params):
+            return "Denied: file is outside the workspace directory."
         return execute_tool_call(name, params, self.memory, self._confirm)
 
     def _get_all_tools(self):
