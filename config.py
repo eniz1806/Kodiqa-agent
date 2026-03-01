@@ -18,23 +18,48 @@ MODEL_ALIASES = {
 
 # Claude API models
 CLAUDE_ALIASES = {
-    "claude": "claude-sonnet-4-20250514",
-    "sonnet": "claude-sonnet-4-20250514",
+    # Latest (4.6)
+    "claude": "claude-sonnet-4-6",
+    "sonnet": "claude-sonnet-4-6",
+    "opus": "claude-opus-4-6",
     "haiku": "claude-haiku-4-5-20251001",
-    "opus": "claude-opus-4-20250514",
+    # Explicit version aliases
+    "opus-4.6": "claude-opus-4-6",
+    "sonnet-4.6": "claude-sonnet-4-6",
+    "haiku-4.5": "claude-haiku-4-5-20251001",
+    # Legacy
+    "sonnet-4.5": "claude-sonnet-4-5-20250929",
+    "opus-4.5": "claude-opus-4-5-20251101",
+    "opus-4.1": "claude-opus-4-1-20250805",
+    "sonnet-4": "claude-sonnet-4-20250514",
+    "opus-4": "claude-opus-4-20250514",
 }
 
 CLAUDE_API_URL = "https://api.anthropic.com/v1/messages"
 
 # Qwen API models (Alibaba Cloud DashScope - OpenAI-compatible)
 QWEN_ALIASES = {
-    "qwen-api": "qwen-plus",
+    # Flagship
     "qwen-max": "qwen3-max",
+    "qwen-plus": "qwen3.5-plus-2026-02-15",
+    "qwen-api": "qwen3.5-plus-2026-02-15",
     "qwen3.5": "qwen3.5-plus-2026-02-15",
     "qwen3.5-plus": "qwen3.5-plus-2026-02-15",
+    "qwen3.5-flash": "qwen3.5-flash",
+    # Coding
+    "qwen-coder": "qwen3-coder-plus",
+    "qwen-coder-flash": "qwen3-coder-flash",
+    # Reasoning
+    "qwq": "qwq-plus",
+    # Fast / cheap
+    "qwen-flash": "qwen-flash",
+    "qwen-turbo": "qwen-turbo",
+    # Long context (10M)
+    "qwen-long": "qwen-long-latest",
+    # Open-source via API
     "qwen3.5-os": "qwen3.5-27b",
-    "qwen-coder-api": "qwen3-coder-plus",
-    "qwen-flash-api": "qwen-flash",
+    # Math
+    "qwen-math": "qwen-math-plus",
 }
 
 QWEN_API_URL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions"

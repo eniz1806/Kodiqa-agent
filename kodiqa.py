@@ -915,13 +915,40 @@ class Kodiqa:
         elif command == "/model":
             if not arg:
                 provider = "Claude API" if is_claude_model(self.model) else ("Qwen API" if is_qwen_api_model(self.model) else "Local/Ollama")
-                self.console.print(f"Current model: [cyan]{self.model}[/] ({provider})")
-                self.console.print(f"Local aliases: {', '.join(MODEL_ALIASES.keys())}")
+                self.console.print(f"Current model: [cyan]{self.model}[/] ({provider})\n")
+                # Build numbered list of all available models
+                choices = []
+                self.console.print("[bold green]Local (Ollama):[/]")
+                for alias, full in MODEL_ALIASES.items():
+                    choices.append((alias, full, "local"))
+                    marker = " [cyan]◀[/]" if full == self.model else ""
+                    self.console.print(f"  {len(choices)}. {alias} [dim]→ {full}[/]{marker}")
                 if self.claude_key:
-                    self.console.print(f"Claude aliases: {', '.join(CLAUDE_ALIASES.keys())}")
+                    self.console.print("[bold yellow]Claude API:[/]")
+                    for alias, full in CLAUDE_ALIASES.items():
+                        choices.append((alias, full, "claude"))
+                        marker = " [cyan]◀[/]" if full == self.model else ""
+                        self.console.print(f"  {len(choices)}. {alias} [dim]→ {full}[/]{marker}")
                 if self.qwen_key:
-                    self.console.print(f"Qwen API aliases: {', '.join(QWEN_ALIASES.keys())}")
-                return
+                    self.console.print("[bold blue]Qwen API:[/]")
+                    for alias, full in QWEN_ALIASES.items():
+                        choices.append((alias, full, "qwen"))
+                        marker = " [cyan]◀[/]" if full == self.model else ""
+                        self.console.print(f"  {len(choices)}. {alias} [dim]→ {full}[/]{marker}")
+                self.console.print()
+                try:
+                    pick = Prompt.ask("[bold]Pick a model[/] (number or name, or 'skip')")
+                except (EOFError, KeyboardInterrupt):
+                    self.console.print("\n[dim]Cancelled.[/]")
+                    return
+                pick = pick.strip()
+                if pick.lower() in ("skip", ""):
+                    return
+                if pick.isdigit() and 1 <= int(pick) <= len(choices):
+                    alias, full, prov = choices[int(pick) - 1]
+                    arg = alias
+                else:
+                    arg = pick
             if arg in CLAUDE_ALIASES:
                 if not self.claude_key:
                     self.console.print("[yellow]No Claude API key set.[/]")

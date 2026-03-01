@@ -33,8 +33,8 @@ class TestIsQwenApiModel:
     def test_alias_key(self):
         assert is_qwen_api_model("qwen-api") is True
         assert is_qwen_api_model("qwen-max") is True
-        assert is_qwen_api_model("qwen-coder-api") is True
-        assert is_qwen_api_model("qwen-flash-api") is True
+        assert is_qwen_api_model("qwen-coder") is True
+        assert is_qwen_api_model("qwen-flash") is True
 
     def test_alias_value(self):
         assert is_qwen_api_model("qwen-plus") is True
