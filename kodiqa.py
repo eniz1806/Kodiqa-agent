@@ -760,6 +760,46 @@ class Kodiqa:
         self.console.print("[yellow]●[/] Could not start Ollama [dim](start manually: ollama serve)[/]")
         return False
 
+    def _fetch_ollama_library(self, installed):
+        """Fetch available models from ollama.com/library, filter out already installed."""
+        import re
+        from bs4 import BeautifulSoup
+        try:
+            with Status("[dim]Fetching available models from ollama.com...[/]", console=self.console, spinner="dots"):
+                resp = requests.get("https://ollama.com/library", timeout=10)
+                resp.raise_for_status()
+            soup = BeautifulSoup(resp.text, "html.parser")
+        except Exception:
+            return []
+
+        models = []
+        for a in soup.find_all("a", href=True):
+            href = a["href"]
+            if not href.startswith("/library/"):
+                continue
+            name = href.replace("/library/", "")
+            if "/" in name or not name:
+                continue
+            # Skip embedding models — not useful for chat
+            text = a.get_text(" ", strip=True).lower()
+            if "embed" in name or "embedding" in text:
+                continue
+            # Description
+            p = a.find("p")
+            desc = p.get_text(strip=True) if p else ""
+            # Pull count
+            pulls_match = re.search(r"([\d.]+[KMB]?)\s*Pulls", a.get_text(" ", strip=True))
+            pulls = pulls_match.group(1) if pulls_match else ""
+            # Skip if already installed
+            already_have = any(
+                inst.startswith(name.split(":")[0]) for inst in installed.keys()
+            )
+            if not already_have:
+                models.append((name, desc, pulls))
+
+        # Return top 20 by popularity (page is already sorted by pulls)
+        return models[:20]
+
     def _stop_ollama(self):
         """Stop Ollama if we started it."""
         if not self._ollama_started_by_us:
@@ -787,67 +827,45 @@ class Kodiqa:
         except Exception:
             return
 
-        if not installed:
-            return
-
         # 1. Check installed models for updates
-        self.console.print(f"\n[dim]Checking {len(installed)} installed models for updates...[/]")
-        updated_count = 0
-        for model_name in list(installed.keys()):
-            try:
-                with Status(f"  [dim]Checking {model_name}...[/]", console=self.console, spinner="dots"):
-                    result = subprocess.run(
-                        [OLLAMA_BIN, "pull", model_name],
-                        capture_output=True, text=True, timeout=120,
-                    )
-                output = result.stdout + result.stderr
-                if "up to date" in output.lower():
-                    self.console.print(f"  [green]●[/] {model_name} [dim]up to date[/]")
-                elif result.returncode == 0:
-                    self.console.print(f"  [green]●[/] {model_name} [bold green]updated![/]")
-                    updated_count += 1
-                else:
-                    self.console.print(f"  [yellow]●[/] {model_name} [dim]check failed[/]")
-            except subprocess.TimeoutExpired:
-                self.console.print(f"  [yellow]●[/] {model_name} [dim]timeout[/]")
-            except Exception:
-                continue
+        if not installed:
+            self.console.print("\n[yellow]No local models installed.[/]")
+        else:
+            self.console.print(f"\n[dim]Checking {len(installed)} installed models for updates...[/]")
+            updated_count = 0
+            for model_name in list(installed.keys()):
+                try:
+                    with Status(f"  [dim]Checking {model_name}...[/]", console=self.console, spinner="dots"):
+                        result = subprocess.run(
+                            [OLLAMA_BIN, "pull", model_name],
+                            capture_output=True, text=True, timeout=120,
+                        )
+                    output = result.stdout + result.stderr
+                    if "up to date" in output.lower():
+                        self.console.print(f"  [green]●[/] {model_name} [dim]up to date[/]")
+                    elif result.returncode == 0:
+                        self.console.print(f"  [green]●[/] {model_name} [bold green]updated![/]")
+                        updated_count += 1
+                    else:
+                        self.console.print(f"  [yellow]●[/] {model_name} [dim]check failed[/]")
+                except subprocess.TimeoutExpired:
+                    self.console.print(f"  [yellow]●[/] {model_name} [dim]timeout[/]")
+                except Exception:
+                    continue
 
-        if updated_count > 0:
-            self.console.print(f"\n[green]{updated_count} model(s) updated![/]")
+            if updated_count > 0:
+                self.console.print(f"\n[green]{updated_count} model(s) updated![/]")
 
-        # 2. Check for popular new models not yet installed
-        recommended = {
-            "qwen3-coder": "Best coding agent (MoE, Alibaba)",
-            "qwen3:14b": "General purpose with thinking mode (Alibaba)",
-            "phi4-reasoning": "Reasoning that beats 70B models (Microsoft)",
-            "gpt-oss": "OpenAI's first open model",
-            "qwen3:30b-a3b": "30B brain at 3B speed (MoE)",
-            "gemma3:12b": "Efficient general purpose (Google)",
-            "llama4:scout": "Multimodal, 10M context (Meta)",
-            "devstral": "Agentic coding (Mistral)",
-            "deepcoder:14b": "Coding at O3-mini level (DeepSeek)",
-            "phi4-reasoning-plus": "Enhanced reasoning (Microsoft)",
-            "qwq": "Deep reasoning, math, science (Alibaba)",
-            "mistral-small3.2": "Great all-rounder (Mistral)",
-        }
-
-        new_models = []
-        for model, desc in recommended.items():
-            # Check if any installed model starts with this name (handles tags)
-            already_have = any(
-                inst.startswith(model.split(":")[0]) for inst in installed.keys()
-            )
-            if not already_have:
-                new_models.append((model, desc))
-
+        # 2. Fetch available models from Ollama library
+        new_models = self._fetch_ollama_library(installed)
         if not new_models:
             return
 
         # Show new models available
         self.console.print(f"\n[bold yellow]New models available ({len(new_models)}):[/]")
-        for i, (model, desc) in enumerate(new_models, 1):
-            self.console.print(f"  [cyan bold]{i}.[/] [cyan]{model}[/] — {desc}")
+        for i, (model, desc, pulls) in enumerate(new_models, 1):
+            pulls_str = f" [dim]({pulls} pulls)[/]" if pulls else ""
+            self.console.print(f"  [cyan bold]{i}.[/] [cyan]{model}[/] — {desc[:70]}{pulls_str}")
 
         try:
             answer = Prompt.ask(
@@ -862,7 +880,7 @@ class Kodiqa:
 
         to_pull = []
         if answer.strip().lower() == "all":
-            to_pull = [m for m, _ in new_models]
+            to_pull = [m for m, _, _ in new_models]
         else:
             # Parse numbers or model names
             parts = answer.replace(",", " ").split()
@@ -873,7 +891,7 @@ class Kodiqa:
                         to_pull.append(new_models[idx][0])
                 except ValueError:
                     # Maybe they typed a model name
-                    for model, _ in new_models:
+                    for model, _, _ in new_models:
                         if part.lower() in model.lower():
                             to_pull.append(model)
                             break
@@ -901,6 +919,10 @@ class Kodiqa:
         # Refresh multi-model list
         self.multi_models = self._discover_models()
         self.console.print(f"\n[green]Models updated! Now using {len(self.multi_models)} models in multi-mode.[/]")
+        # Auto-set model if current one wasn't installed
+        if not installed and to_pull:
+            self.model = to_pull[0]
+            self.console.print(f"Model set to [cyan]{self.model}[/]")
 
     def _handle_slash(self, cmd):
         parts = cmd.split(None, 1)
