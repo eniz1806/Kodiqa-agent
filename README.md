@@ -3,13 +3,13 @@
 </p>
 
 <p align="center">
-  <strong>Your personal Claude Code clone running 100% locally with free models — or powered by 6 cloud APIs for maximum intelligence.</strong>
+  <strong>Your personal Claude Code clone running 100% locally with free models — or powered by 6 cloud APIs. Now with plugins, sub-agents, LSP, themes, and 49 slash commands.</strong>
 </p>
 
 <p align="center">
   <a href="#install"><img src="https://img.shields.io/badge/python-3.9+-blue?logo=python&logoColor=white" alt="Python 3.9+"/></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-purple" alt="License"/></a>
-  <a href="#testing"><img src="https://img.shields.io/badge/tests-165%20passing-brightgreen" alt="Tests"/></a>
+  <a href="#testing"><img src="https://img.shields.io/badge/tests-196%20passing-brightgreen" alt="Tests"/></a>
   <a href="#api-setup"><img src="https://img.shields.io/badge/providers-7-cyan" alt="7 Providers"/></a>
   <a href="#26-tools"><img src="https://img.shields.io/badge/tools-26-orange" alt="26 Tools"/></a>
 </p>
@@ -49,7 +49,7 @@
 | **Tests** | 165 | Yes | Yes | Yes | Yes |
 | **Open source** | Yes (AGPL-3.0) | Yes (Apache-2.0) | Yes (Apache-2.0) | Yes (Apache-2.0) | Yes (MIT) |
 
-**Kodiqa's unique advantages**: free local models, 7 API providers, multi-model consensus, batch edit review, conversation branching, budget limits, auto-lint, and auto model discovery — features no other agent offers together.
+**Kodiqa's unique advantages**: free local models, 7 API providers, multi-model consensus, custom plugins, sub-agents, LSP integration, 5 themes, project templates, batch edit review, conversation branching, budget limits, auto-lint, and auto model discovery — features no other agent offers together.
 
 ## Install
 
@@ -404,15 +404,17 @@ find any bugs in this code
 
 ```
 ~/LLMS/kodiqa/
-  kodiqa.py          # Main agent (~3508 lines)
+  kodiqa.py          # Main agent (~4158 lines)
   actions.py         # 26 action handlers (~950 lines)
   tools.py           # Tool schemas (~461 lines)
-  config.py          # Config, provider registry, aliases (~425 lines)
+  config.py          # Config, themes, provider registry (~489 lines)
   web.py             # Web search + page fetch (~194 lines)
   memory.py          # SQLite persistent memory (82 lines)
   mcp.py             # MCP client (~176 lines)
+  templates.py       # 5 project templates (61 lines)
+  lsp.py             # LSP client (~220 lines)
   bin/kodiqa         # Global install script
-  tests/             # 165 tests (pytest)
+  tests/             # 196 tests (pytest)
   pyproject.toml     # Package config (pip install .)
   requirements.txt   # Dependencies
 

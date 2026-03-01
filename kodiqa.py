@@ -4,6 +4,7 @@
 import json
 import os
 import sys
+import threading
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.history import FileHistory
@@ -354,7 +355,24 @@ class KodiqaCompleter(Completer):
                         for name in ["claude"] + list(OPENAI_COMPAT_PROVIDERS.keys()):
                             if name.startswith(word):
                                 yield Completion(name, start_position=-len(word))
-                    elif cmd in ("/cd", "/scan"):
+                    elif cmd in ("/theme",):
+                        from config import THEMES
+                        for t in THEMES:
+                            if t.startswith(word):
+                                yield Completion(t, start_position=-len(word))
+                    elif cmd in ("/init",):
+                        try:
+                            from templates import TEMPLATES
+                            for t in TEMPLATES:
+                                if t.startswith(word):
+                                    yield Completion(t, start_position=-len(word))
+                        except ImportError:
+                            pass
+                    elif cmd in ("/lsp",):
+                        for sub in ("start", "stop", "status"):
+                            if sub.startswith(word):
+                                yield Completion(sub, start_position=-len(word))
+                    elif cmd in ("/cd", "/scan", "/pin", "/unpin"):
                         yield from self._complete_path(word)
                     elif cmd in ("/restore",):
                         for n in self.agent._checkpoints.keys():
@@ -447,6 +465,23 @@ class Kodiqa:
         self._budget_exceeded = False
         # Auto-lint command after edits
         self.lint_cmd = ""
+        # Pinned files — always in context
+        self._pinned_files = []
+        # Desktop notifications for long tasks
+        self._notify_enabled = False
+        # Cost optimizer — suggest cheaper models
+        self._optimizer_enabled = self.settings.get("optimizer", False)
+        # Theme
+        from config import THEMES
+        self.theme = THEMES.get(self.settings.get("theme", "dark"), THEMES["dark"])
+        # Plugins
+        self._plugins = {}
+        self._load_plugins()
+        # Sub-agents
+        self._agents = {}
+        self._agent_counter = 0
+        # LSP client
+        self._lsp_client = None
         # Load .kodiqaignore
         self._load_kodiqaignore()
 
@@ -458,6 +493,9 @@ class Kodiqa:
         "/export", "/checkpoint", "/restore", "/env", "/verbose", "/mode",
         "/plan", "/accept", "/search", "/cd", "/branch", "/mcp",
         "/autocommit", "/budget", "/undo", "/diff", "/lint",
+        "/pin", "/unpin", "/alias", "/unalias", "/notify", "/optimizer", "/theme",
+        "/share", "/pr", "/review", "/issue", "/init", "/plugins",
+        "/agent", "/agents", "/lsp", "/voice",
         "/help", "/quit",
     ]
 
@@ -480,6 +518,52 @@ class Kodiqa:
         if parts:
             return "## Shell Environment\n" + "\n".join(parts)
         return ""
+
+    def _build_pinned_context(self):
+        """Read all pinned files and format as context block."""
+        if not self._pinned_files:
+            return ""
+        parts = ["## Pinned Files"]
+        for path in self._pinned_files:
+            try:
+                with open(path, "r", errors="replace") as f:
+                    content = f.read()
+                if len(content) > 10000:
+                    content = content[:10000] + "\n... (truncated)"
+                rel = os.path.relpath(path, self.cwd) if path.startswith(self.cwd) else path
+                parts.append(f"### {rel}\n```\n{content}\n```")
+            except Exception:
+                pass
+        return "\n\n".join(parts) if len(parts) > 1 else ""
+
+    def _send_notification(self, title, body):
+        """Send desktop notification (macOS)."""
+        try:
+            script = f'display notification "{body}" with title "{title}" sound name "Glass"'
+            subprocess.run(["osascript", "-e", script], capture_output=True, timeout=5)
+        except Exception:
+            pass
+
+    def _check_cost_optimizer(self, user_msg):
+        """Suggest cheaper model if message is simple and model is expensive."""
+        if not self._optimizer_enabled:
+            return
+        expensive = {"opus", "opus-4.6", "opus-4.5", "opus-4.1", "opus-4", "gpt", "gpt4",
+                      "mistral", "qwen-max", "claude", "sonnet"}
+        model_alias = self.model.split("/")[-1].split(":")[0]
+        # Check if using expensive model
+        is_expensive = any(model_alias.startswith(e) or self.model in CLAUDE_ALIASES.get(e, "")
+                          for e in expensive)
+        if not is_expensive:
+            return
+        code_keywords = {"edit", "create", "fix", "refactor", "debug", "write", "implement",
+                         "build", "add", "remove", "delete", "update", "modify", "change",
+                         "move", "rename", "search", "find", "replace", "commit"}
+        msg_lower = user_msg.lower()
+        if len(user_msg) < 100 and not any(kw in msg_lower for kw in code_keywords):
+            self.console.print(
+                f"  [dim]Tip: Simple question? Try /model haiku for cheaper responses.[/]"
+            )
 
     def _detect_shell_env(self):
         """Detect shell environment, OS, and dev tools."""
@@ -1476,8 +1560,130 @@ class Kodiqa:
             else:
                 self.lint_cmd = arg.strip()
                 self.console.print(f"[green]Auto-lint ON[/] — running [cyan]{self.lint_cmd}[/] after edits")
+        elif command == "/pin":
+            if not arg:
+                if self._pinned_files:
+                    self.console.print("[bold]Pinned files:[/]")
+                    for p in self._pinned_files:
+                        rel = os.path.relpath(p, self.cwd) if p.startswith(self.cwd) else p
+                        try:
+                            size = os.path.getsize(p)
+                            self.console.print(f"  [cyan]{rel}[/] [dim]({size:,} bytes)[/]")
+                        except OSError:
+                            self.console.print(f"  [cyan]{rel}[/] [dim](missing)[/]")
+                else:
+                    self.console.print("[dim]No pinned files. Usage: /pin <path>[/]")
+            else:
+                path = os.path.abspath(os.path.expanduser(arg.strip()))
+                if not os.path.isfile(path):
+                    self.console.print(f"[red]File not found: {arg}[/]")
+                elif path in self._pinned_files:
+                    self.console.print(f"[dim]Already pinned: {arg}[/]")
+                else:
+                    self._pinned_files.append(path)
+                    rel = os.path.relpath(path, self.cwd) if path.startswith(self.cwd) else path
+                    self.console.print(f"[green]Pinned:[/] {rel}")
+        elif command == "/unpin":
+            if not arg:
+                self.console.print("[dim]Usage: /unpin <path>[/]")
+            else:
+                path = os.path.abspath(os.path.expanduser(arg.strip()))
+                if path in self._pinned_files:
+                    self._pinned_files.remove(path)
+                    rel = os.path.relpath(path, self.cwd) if path.startswith(self.cwd) else path
+                    self.console.print(f"[yellow]Unpinned:[/] {rel}")
+                else:
+                    self.console.print(f"[dim]Not pinned: {arg}[/]")
+        elif command == "/alias":
+            aliases = self.settings.get("aliases", {})
+            if not arg:
+                if aliases:
+                    self.console.print("[bold]Command aliases:[/]")
+                    for short, full in sorted(aliases.items()):
+                        self.console.print(f"  [cyan]/{short}[/] → [dim]/{full}[/]")
+                else:
+                    self.console.print("[dim]No aliases. Usage: /alias <short> <command>[/]")
+            else:
+                parts2 = arg.split(None, 1)
+                if len(parts2) < 2:
+                    self.console.print("[dim]Usage: /alias <short> <command>[/]")
+                else:
+                    short, full = parts2[0].lstrip("/"), parts2[1].lstrip("/")
+                    aliases[short] = full
+                    self.settings["aliases"] = aliases
+                    save_settings(self.settings)
+                    self.console.print(f"[green]Alias set:[/] /{short} → /{full}")
+        elif command == "/unalias":
+            if not arg:
+                self.console.print("[dim]Usage: /unalias <name>[/]")
+            else:
+                name = arg.strip().lstrip("/")
+                aliases = self.settings.get("aliases", {})
+                if name in aliases:
+                    del aliases[name]
+                    self.settings["aliases"] = aliases
+                    save_settings(self.settings)
+                    self.console.print(f"[yellow]Removed alias:[/] /{name}")
+                else:
+                    self.console.print(f"[dim]No alias: /{name}[/]")
+        elif command == "/notify":
+            self._notify_enabled = not self._notify_enabled
+            state = "ON" if self._notify_enabled else "OFF"
+            self.console.print(f"[{'green' if self._notify_enabled else 'yellow'}]Desktop notifications {state}[/]")
+        elif command == "/optimizer":
+            self._optimizer_enabled = not self._optimizer_enabled
+            self.settings["optimizer"] = self._optimizer_enabled
+            save_settings(self.settings)
+            state = "ON" if self._optimizer_enabled else "OFF"
+            self.console.print(f"[{'green' if self._optimizer_enabled else 'yellow'}]Cost optimizer {state}[/]")
+        elif command == "/theme":
+            from config import THEMES
+            if not arg:
+                self.console.print("[bold]Available themes:[/]")
+                current = self.settings.get("theme", "dark")
+                for name in THEMES:
+                    marker = " ← current" if name == current else ""
+                    self.console.print(f"  [cyan]{name}[/]{' [dim]' + marker + '[/]' if marker else ''}")
+            else:
+                name = arg.strip().lower()
+                if name in THEMES:
+                    self.theme = THEMES[name]
+                    self.settings["theme"] = name
+                    save_settings(self.settings)
+                    self.console.print(f"[green]Theme set:[/] {name}")
+                else:
+                    self.console.print(f"[red]Unknown theme: {name}. Use /theme to list.[/]")
+        elif command == "/share":
+            self._share_session_html()
+        elif command == "/pr":
+            self._handle_gh("pr", arg)
+        elif command == "/review":
+            self._handle_gh("review", arg)
+        elif command == "/issue":
+            self._handle_gh("issue", arg)
+        elif command == "/init":
+            self._handle_init(arg)
+        elif command == "/plugins":
+            self._handle_plugins(arg)
+        elif command == "/agent":
+            self._handle_agent(arg)
+        elif command == "/agents":
+            self._handle_agents()
+        elif command == "/lsp":
+            self._handle_lsp(arg)
+        elif command == "/voice":
+            self._handle_voice(arg)
         else:
-            self.console.print(f"[red]Unknown command: {command}. Type /help[/]")
+            # Check user-defined aliases before giving up
+            aliases = self.settings.get("aliases", {})
+            cmd_name = command.lstrip("/")
+            if cmd_name in aliases:
+                expanded = "/" + aliases[cmd_name]
+                if arg:
+                    expanded += " " + arg
+                self._handle_slash(expanded)
+            else:
+                self.console.print(f"[red]Unknown command: {command}. Type /help[/]")
 
     def _setup_api_key(self, provider=None):
         if provider == "claude":
@@ -1896,6 +2102,16 @@ class Kodiqa:
             self._plan_request = None
 
         self._dispatch_chat(user_msg)
+        # Send notification if task took >10s
+        if self._notify_enabled and hasattr(self, '_chat_start_time'):
+            elapsed = time.time() - self._chat_start_time
+            if elapsed > 10:
+                self._send_notification("Kodiqa", f"Response ready ({elapsed:.0f}s)")
+        # Render any mermaid diagrams in the last response
+        if self.history and self.history[-1].get("role") == "assistant":
+            last_content = self.history[-1].get("content", "")
+            if isinstance(last_content, str) and "```mermaid" in last_content:
+                self._render_diagrams(last_content)
 
     def _dispatch_chat(self, user_msg):
         """Route to the correct provider chat method."""
@@ -1903,6 +2119,8 @@ class Kodiqa:
             self.console.print(f"[red]Budget exceeded (${self.session_tokens['cost']:.4f} / ${self.budget_limit:.2f}).[/]")
             self.console.print("[dim]Use /budget <amount> to increase, or start a new session.[/]")
             return
+        self._check_cost_optimizer(user_msg)
+        self._chat_start_time = time.time()
         if self.multi_models:
             self._chat_multi(user_msg)
         elif is_claude_model(self.model) or self._is_live_claude(self.model):
@@ -2265,6 +2483,9 @@ class Kodiqa:
             env_ctx = self._shell_env_context()
             if env_ctx:
                 system_prompt += "\n\n" + env_ctx
+            pinned_ctx = self._build_pinned_context()
+            if pinned_ctx:
+                system_prompt += "\n\n" + pinned_ctx
             messages = [{"role": "system", "content": system_prompt}] + self.history
 
             assistant_text = self._stream_ollama(messages)
@@ -2321,6 +2542,9 @@ class Kodiqa:
             env_ctx = self._shell_env_context()
             if env_ctx:
                 system_prompt += "\n\n" + env_ctx
+            pinned_ctx = self._build_pinned_context()
+            if pinned_ctx:
+                system_prompt += "\n\n" + pinned_ctx
 
             # Build Claude messages (must alternate user/assistant)
             messages = self._build_claude_messages()
@@ -2727,6 +2951,9 @@ class Kodiqa:
             env_ctx = self._shell_env_context()
             if env_ctx:
                 system_prompt += "\n\n" + env_ctx
+            pinned_ctx = self._build_pinned_context()
+            if pinned_ctx:
+                system_prompt += "\n\n" + pinned_ctx
 
             messages = self._build_openai_messages(system_prompt)
 
@@ -3336,6 +3563,429 @@ class Kodiqa:
         except Exception as e:
             self.console.print(f"  [red]●[/] Lint error: {e}")
         return None
+
+    # ── Phase 2: Share, Git PR, Templates ──
+
+    def _share_session_html(self):
+        """Export session as styled HTML file."""
+        if not self.history:
+            self.console.print("[dim]No conversation to share.[/]")
+            return
+        export_dir = os.path.join(KODIQA_DIR, "exports")
+        os.makedirs(export_dir, exist_ok=True)
+        ts = time.strftime("%Y-%m-%d_%H-%M-%S")
+        path = os.path.join(export_dir, f"{ts}.html")
+        html = [
+            "<!DOCTYPE html><html><head>",
+            "<meta charset='utf-8'>",
+            f"<title>Kodiqa Session — {ts}</title>",
+            "<style>",
+            "body{background:#1a1b26;color:#c0caf5;font-family:'JetBrains Mono',monospace;max-width:800px;margin:0 auto;padding:20px}",
+            ".user{background:#24283b;border-left:3px solid #7aa2f7;padding:12px;margin:10px 0;border-radius:6px}",
+            ".assistant{background:#1e2030;border-left:3px solid #9ece6a;padding:12px;margin:10px 0;border-radius:6px}",
+            ".tool{background:#1a1b26;border-left:3px solid #565f89;padding:8px;margin:5px 0;font-size:0.85em;border-radius:4px}",
+            ".label{font-size:0.75em;color:#565f89;margin-bottom:4px}",
+            "pre{background:#16161e;padding:10px;border-radius:4px;overflow-x:auto}",
+            "code{color:#bb9af7}",
+            "h1{color:#7aa2f7;border-bottom:1px solid #24283b;padding-bottom:10px}",
+            ".meta{color:#565f89;font-size:0.8em;margin-top:20px;padding-top:10px;border-top:1px solid #24283b}",
+            "</style></head><body>",
+            f"<h1>Kodiqa Session</h1>",
+            f"<div class='meta'>Model: {self.model} | "
+            f"Tokens: {self.session_tokens['input']+self.session_tokens['output']:,} | "
+            f"Cost: ${self.session_tokens['cost']:.4f} | {ts}</div>",
+        ]
+        for msg in self.history:
+            role = msg.get("role", "")
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                # Claude-style content blocks
+                text_parts = [b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"]
+                content = "\n".join(text_parts)
+            if not content:
+                continue
+            content_html = content.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            content_html = content_html.replace("\n", "<br>")
+            if role == "user":
+                html.append(f"<div class='user'><div class='label'>You</div>{content_html}</div>")
+            elif role == "assistant":
+                html.append(f"<div class='assistant'><div class='label'>Kodiqa</div>{content_html}</div>")
+            elif role == "tool":
+                html.append(f"<div class='tool'><div class='label'>Tool Result</div>{content_html}</div>")
+        html.append("</body></html>")
+        with open(path, "w") as f:
+            f.write("\n".join(html))
+        self.console.print(f"[green]Session exported:[/] {path}")
+
+    def _handle_gh(self, action, arg):
+        """Handle /pr, /review, /issue commands using gh CLI."""
+        try:
+            subprocess.run(["gh", "--version"], capture_output=True, timeout=5, check=True)
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            self.console.print("[red]GitHub CLI (gh) not installed.[/] Install: [cyan]brew install gh[/]")
+            return
+
+        if action == "pr":
+            try:
+                cmd = ["gh", "pr", "create", "--fill"]
+                if arg:
+                    cmd = ["gh", "pr", "create", "--title", arg, "--fill"]
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                output = (result.stdout + result.stderr).strip()
+                if output:
+                    self.console.print(Panel(output, title="PR Created", border_style="green"))
+                else:
+                    self.console.print("[dim]No output from gh pr create.[/]")
+            except Exception as e:
+                self.console.print(f"[red]Error: {e}[/]")
+
+        elif action == "review":
+            if not arg:
+                self.console.print("[dim]Usage: /review <pr-number>[/]")
+                return
+            try:
+                result = subprocess.run(
+                    ["gh", "pr", "diff", arg.strip()],
+                    capture_output=True, text=True, timeout=30,
+                )
+                diff = result.stdout.strip()
+                if diff:
+                    if len(diff) > 15000:
+                        diff = diff[:15000] + "\n... (truncated)"
+                    self.history.append({
+                        "role": "user",
+                        "content": f"Please review this pull request diff (PR #{arg.strip()}):\n\n```diff\n{diff}\n```\n\nProvide a thorough code review."
+                    })
+                    self.console.print(f"[green]PR #{arg.strip()} diff loaded.[/] Asking for review...")
+                    self._dispatch_chat(self.history[-1]["content"])
+                else:
+                    self.console.print(f"[dim]No diff found for PR #{arg}[/]")
+            except Exception as e:
+                self.console.print(f"[red]Error: {e}[/]")
+
+        elif action == "issue":
+            if not arg:
+                self.console.print("[dim]Usage: /issue <number>[/]")
+                return
+            try:
+                result = subprocess.run(
+                    ["gh", "issue", "view", arg.strip()],
+                    capture_output=True, text=True, timeout=15,
+                )
+                body = result.stdout.strip()
+                if body:
+                    if len(body) > 10000:
+                        body = body[:10000] + "\n... (truncated)"
+                    self.history.append({
+                        "role": "user",
+                        "content": f"Here is GitHub issue #{arg.strip()}:\n\n{body}\n\nPlease analyze and help implement this."
+                    })
+                    self.console.print(f"[green]Issue #{arg.strip()} loaded into context.[/]")
+                    self._dispatch_chat(self.history[-1]["content"])
+                else:
+                    self.console.print(f"[dim]No issue found: #{arg}[/]")
+            except Exception as e:
+                self.console.print(f"[red]Error: {e}[/]")
+
+    def _handle_init(self, arg):
+        """Handle /init command for project templates."""
+        try:
+            from templates import TEMPLATES
+        except ImportError:
+            self.console.print("[dim]No templates module found.[/]")
+            return
+        if not arg:
+            self.console.print("[bold]Available templates:[/]")
+            for name, tmpl in TEMPLATES.items():
+                self.console.print(f"  [cyan]{name}[/] — {tmpl.get('description', '')}")
+            self.console.print("[dim]Usage: /init <template>[/]")
+            return
+        name = arg.strip().lower()
+        if name not in TEMPLATES:
+            self.console.print(f"[red]Unknown template: {name}. Use /init to list.[/]")
+            return
+        tmpl = TEMPLATES[name]
+        files = tmpl.get("files", {})
+        if not files:
+            self.console.print("[dim]Template has no files.[/]")
+            return
+        # Confirm
+        self.console.print(f"[bold]Template: {name}[/] — {len(files)} files")
+        for fp in files:
+            self.console.print(f"  [dim]{fp}[/]")
+        options = [("Yes", f"Create {len(files)} files"), ("No", "")]
+        choice = self._arrow_select(options, self.console, default=0)
+        if choice != 0:
+            self.console.print("[dim]Cancelled.[/]")
+            return
+        for fp, content in files.items():
+            full = os.path.join(self.cwd, fp)
+            os.makedirs(os.path.dirname(full) or ".", exist_ok=True)
+            with open(full, "w") as f:
+                f.write(content)
+            self.console.print(f"  [green]●[/] {fp}")
+        # Run setup commands
+        for cmd in tmpl.get("commands", []):
+            self.console.print(f"  [yellow]●[/] Running: {cmd}")
+            try:
+                subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60, cwd=self.cwd)
+            except Exception:
+                pass
+        self.console.print(f"[green]Project initialized from template: {name}[/]")
+
+    # ── Phase 3: Plugins ──
+
+    def _load_plugins(self):
+        """Scan ~/.kodiqa/plugins/ for custom tool plugins."""
+        self._plugins = {}
+        plugins_dir = os.path.join(KODIQA_DIR, "plugins")
+        if not os.path.isdir(plugins_dir):
+            return
+        import importlib.util
+        for fname in sorted(os.listdir(plugins_dir)):
+            if not fname.endswith(".py"):
+                continue
+            name = fname[:-3]
+            path = os.path.join(plugins_dir, fname)
+            try:
+                spec = importlib.util.spec_from_file_location(f"kodiqa_plugin_{name}", path)
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+                schema = getattr(mod, "TOOL_SCHEMA", None)
+                handler = getattr(mod, "handle", None)
+                if schema and handler:
+                    tool_name = f"plugin_{name}"
+                    schema = dict(schema)
+                    schema["name"] = tool_name
+                    self._plugins[tool_name] = {"schema": schema, "handler": handler, "file": fname}
+            except Exception as e:
+                self.console.print(f"  [red]Plugin error ({fname}): {e}[/]")
+
+    def _handle_plugins(self, arg):
+        """Handle /plugins command."""
+        if arg and arg.strip().lower() == "reload":
+            self._load_plugins()
+            self.console.print(f"[green]Reloaded {len(self._plugins)} plugins.[/]")
+            return
+        if not hasattr(self, '_plugins'):
+            self._load_plugins()
+        if not self._plugins:
+            self.console.print("[dim]No plugins loaded. Add .py files to ~/.kodiqa/plugins/[/]")
+            self.console.print("[dim]Each plugin needs TOOL_SCHEMA dict and handle(params) function.[/]")
+            return
+        self.console.print(f"[bold]Loaded plugins ({len(self._plugins)}):[/]")
+        for name, info in self._plugins.items():
+            desc = info["schema"].get("description", "")[:60]
+            self.console.print(f"  [cyan]{name}[/] [dim]({info['file']})[/] — {desc}")
+
+    # ── Phase 4: Sub-agents, LSP, Voice, Image Gen ──
+
+    def _handle_agent(self, arg):
+        """Spawn a sub-agent to handle a task."""
+        if not arg:
+            self.console.print("[dim]Usage: /agent <task description>[/]")
+            return
+        active = sum(1 for a in self._agents.values() if a.get("status") == "running")
+        if active >= 3:
+            self.console.print("[red]Max 3 concurrent agents. Wait for one to finish.[/]")
+            return
+        self._agent_counter += 1
+        agent_id = f"agent_{self._agent_counter}"
+        self._agents[agent_id] = {"task": arg, "status": "running", "result": None}
+        self.console.print(f"[green]●[/] Spawned {agent_id}: {arg[:60]}")
+
+        def worker():
+            try:
+                # Use compact non-streaming query
+                if is_claude_model(self.model) or self._is_live_claude(self.model):
+                    result = self._claude_nostream(
+                        f"Complete this task concisely:\n{arg}",
+                        [{"role": "user", "content": arg}]
+                    )
+                else:
+                    provider = self._get_provider_for_model(self.model)
+                    if provider:
+                        result = self._openai_compat_nostream(
+                            f"Complete this task concisely:\n{arg}",
+                            [{"role": "user", "content": arg}],
+                            provider,
+                        )
+                    else:
+                        resp = requests.post(
+                            f"{OLLAMA_URL}/api/chat",
+                            json={"model": self.model, "messages": [
+                                {"role": "system", "content": "Complete this task concisely."},
+                                {"role": "user", "content": arg},
+                            ], "stream": False},
+                            timeout=120,
+                        )
+                        result = resp.json().get("message", {}).get("content", "No response")
+                self._agents[agent_id]["result"] = result
+                self._agents[agent_id]["status"] = "done"
+            except Exception as e:
+                self._agents[agent_id]["result"] = f"Error: {e}"
+                self._agents[agent_id]["status"] = "error"
+
+        t = threading.Thread(target=worker, daemon=True)
+        t.start()
+
+    def _handle_agents(self):
+        """List running and completed agents."""
+        if not self._agents:
+            self.console.print("[dim]No agents. Use /agent <task> to spawn one.[/]")
+            return
+        for aid, info in self._agents.items():
+            status = info["status"]
+            color = {"running": "yellow", "done": "green", "error": "red"}.get(status, "dim")
+            self.console.print(f"  [{color}]●[/] {aid} [{color}]{status}[/] — {info['task'][:50]}")
+            if status in ("done", "error") and info.get("result"):
+                result = info["result"]
+                if len(result) > 500:
+                    result = result[:500] + "..."
+                self.console.print(Panel(result, title=aid, border_style=color))
+        # Offer to inject completed results
+        done = [(aid, info) for aid, info in self._agents.items() if info["status"] == "done" and info.get("result")]
+        if done:
+            self.console.print(f"\n[dim]{len(done)} completed. Results shown above.[/]")
+
+    def _handle_lsp(self, arg):
+        """Handle /lsp command for Language Server Protocol."""
+        try:
+            from lsp import LSPClient
+        except ImportError:
+            self.console.print("[dim]LSP module not available yet.[/]")
+            return
+        parts = arg.strip().split() if arg else []
+        sub = parts[0] if parts else ""
+
+        if sub == "start":
+            lang = parts[1] if len(parts) > 1 else self._detect_project_language()
+            if not lang:
+                self.console.print("[dim]Usage: /lsp start <python|typescript|go>[/]")
+                return
+            try:
+                self._lsp_client = LSPClient()
+                self._lsp_client.start(lang, self.cwd)
+                self.console.print(f"[green]LSP started:[/] {lang}")
+            except Exception as e:
+                self.console.print(f"[red]LSP start error: {e}[/]")
+                self._lsp_client = None
+        elif sub == "stop":
+            if self._lsp_client:
+                self._lsp_client.stop()
+                self._lsp_client = None
+                self.console.print("[yellow]LSP stopped.[/]")
+            else:
+                self.console.print("[dim]No LSP server running.[/]")
+        else:
+            if self._lsp_client:
+                self.console.print(f"[green]LSP running:[/] {self._lsp_client.language}")
+            else:
+                self.console.print("[dim]No LSP server. Usage: /lsp start <language>[/]")
+
+    def _detect_project_language(self):
+        """Detect primary project language from files."""
+        counts = {}
+        for f in os.listdir(self.cwd):
+            ext = os.path.splitext(f)[1]
+            if ext in (".py",):
+                counts["python"] = counts.get("python", 0) + 1
+            elif ext in (".ts", ".tsx", ".js", ".jsx"):
+                counts["typescript"] = counts.get("typescript", 0) + 1
+            elif ext in (".go",):
+                counts["go"] = counts.get("go", 0) + 1
+        if counts:
+            return max(counts, key=counts.get)
+        return None
+
+    def _handle_voice(self, arg):
+        """Handle /voice command for speech-to-text input."""
+        # Check for sox
+        try:
+            subprocess.run(["sox", "--version"], capture_output=True, timeout=5, check=True)
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            self.console.print("[red]sox not installed.[/] Install: [cyan]brew install sox[/]")
+            return
+
+        tmp_wav = os.path.join("/tmp", "kodiqa_voice.wav")
+        self.console.print("[bold cyan]Recording...[/] (press Ctrl+C to stop, max 30s)")
+        try:
+            proc = subprocess.Popen(
+                ["rec", "-q", tmp_wav, "trim", "0", "30"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            proc.wait()
+        except KeyboardInterrupt:
+            proc.terminate()
+            time.sleep(0.3)
+        except Exception as e:
+            self.console.print(f"[red]Recording error: {e}[/]")
+            return
+
+        if not os.path.isfile(tmp_wav):
+            self.console.print("[dim]No recording captured.[/]")
+            return
+
+        # Transcribe — try OpenAI Whisper API first
+        text = None
+        openai_key = self.api_keys.get("openai", "")
+        if openai_key:
+            try:
+                with open(tmp_wav, "rb") as f:
+                    resp = requests.post(
+                        "https://api.openai.com/v1/audio/transcriptions",
+                        headers={"Authorization": f"Bearer {openai_key}"},
+                        files={"file": ("voice.wav", f, "audio/wav")},
+                        data={"model": "whisper-1"},
+                        timeout=30,
+                    )
+                    if resp.ok:
+                        text = resp.json().get("text", "")
+            except Exception:
+                pass
+
+        if not text:
+            self.console.print("[dim]Transcription failed. Need OpenAI API key for Whisper.[/]")
+            try:
+                os.remove(tmp_wav)
+            except OSError:
+                pass
+            return
+
+        self.console.print(f"[green]Transcribed:[/] {text}")
+        try:
+            os.remove(tmp_wav)
+        except OSError:
+            pass
+        # Use as prompt
+        if text.strip():
+            self._chat(text.strip())
+
+    # ── Diagram Detection ──
+
+    def _render_diagrams(self, text):
+        """Detect and render mermaid/matplotlib code blocks in AI response."""
+        import re
+        # Mermaid blocks
+        mermaid_blocks = re.findall(r'```mermaid\n(.*?)```', text, re.DOTALL)
+        for i, block in enumerate(mermaid_blocks):
+            try:
+                subprocess.run(["mmdc", "--version"], capture_output=True, timeout=5, check=True)
+            except (FileNotFoundError, subprocess.CalledProcessError):
+                break  # mmdc not installed
+            tmp_in = f"/tmp/kodiqa_mermaid_{i}.mmd"
+            tmp_out = f"/tmp/kodiqa_mermaid_{i}.png"
+            try:
+                with open(tmp_in, "w") as f:
+                    f.write(block)
+                subprocess.run(
+                    ["mmdc", "-i", tmp_in, "-o", tmp_out, "-t", "dark", "-b", "transparent"],
+                    capture_output=True, timeout=30,
+                )
+                if os.path.isfile(tmp_out):
+                    self.console.print(f"  [dim]Diagram saved: {tmp_out}[/]")
+            except Exception:
+                pass
 
     @staticmethod
     def _arrow_select(options, console, default=0):

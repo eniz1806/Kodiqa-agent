@@ -1,24 +1,26 @@
 # Kodiqa - Local AI Coding Agent
 
 ## What This Is
-A Claude Code clone that runs 100% locally using free Ollama models, with optional cloud APIs (Claude, OpenAI, DeepSeek, Groq, Mistral, Qwen) for smarter responses. Python CLI agent with multi-model consensus, 26 tools, MCP server support, auto model discovery, 3 permission modes, plan mode, batch edit review, tab autocomplete, context window management, conversation branching, thinking display, web search, persistent memory, compact streaming, and full filesystem access.
+A Claude Code clone that runs 100% locally using free Ollama models, with optional cloud APIs (Claude, OpenAI, DeepSeek, Groq, Mistral, Qwen) for smarter responses. Python CLI agent with multi-model consensus, 26 tools, MCP server support, auto model discovery, 3 permission modes, plan mode, batch edit review, tab autocomplete, context window management, conversation branching, thinking display, web search, persistent memory, compact streaming, custom plugins, sub-agents, LSP integration, 5 themes, and full filesystem access.
 
 ## Architecture
 
 ```
-kodiqa.py  (~3508 lines)  Main agent: Kodiqa class, StreamWriter, KodiqaCompleter, prompt_toolkit UI, chat loops, slash commands, modes, MCP, branching, auto-discovery, workspace boundary, auto-commit, budget, lint
-actions.py (~950 lines)   26 action handlers: file ops, git, search, web, memory, clipboard, multi_edit, edit queue + diff preview
-tools.py   (~461 lines)   Tool schemas (Claude native format, converted to OpenAI format for OpenAI-compat providers)
-config.py  (~425 lines)   Constants, provider registry (OPENAI_COMPAT_PROVIDERS), model aliases, system prompt, config, .kodiqaignore
-web.py     (~194 lines)   3 search engines (DuckDuckGo, Google scrape, Google API) + page fetcher
-memory.py  (82 lines)     SQLite-backed persistent memory store
-mcp.py     (~176 lines)   MCP client: MCPServer (stdio JSON-RPC transport) + MCPManager (multi-server)
+kodiqa.py    (~4158 lines)  Main agent: Kodiqa class, StreamWriter, KodiqaCompleter, prompt_toolkit UI, chat loops, slash commands, modes, MCP, branching, auto-discovery, workspace boundary, auto-commit, budget, lint, plugins, sub-agents, LSP, voice, themes
+actions.py   (~950 lines)   26 action handlers: file ops, git, search, web, memory, clipboard, multi_edit, edit queue + diff preview
+tools.py     (~461 lines)   Tool schemas (Claude native format, converted to OpenAI format for OpenAI-compat providers)
+config.py    (~489 lines)   Constants, provider registry, model aliases, themes, system prompt, config, .kodiqaignore
+web.py       (~194 lines)   3 search engines (DuckDuckGo, Google scrape, Google API) + page fetcher
+memory.py    (82 lines)     SQLite-backed persistent memory store
+mcp.py       (~176 lines)   MCP client: MCPServer (stdio JSON-RPC transport) + MCPManager (multi-server)
+templates.py (61 lines)     5 project templates for /init command
+lsp.py       (~220 lines)   LSP client for Language Server Protocol integration
 ```
 
 ## Test Suite
 
 ```
-tests/           165 tests, all passing (~0.25s)
+tests/           196 tests, all passing (~0.24s)
   conftest.py          Shared fixtures (sample_file, sample_tree, memory_store)
   test_parse_actions   Action parsing (~18 tests)
   test_config          Config functions + provider registry (~22 tests)
@@ -31,6 +33,7 @@ tests/           165 tests, all passing (~0.25s)
   test_stream_writer   StreamWriter (~5 tests)
   test_mcp             MCP client (~27 tests)
   test_new_features    Thinking, branching, slash commands (~16 tests)
+  test_features_v2     Themes, pin, alias, optimizer, templates, LSP, plugins, agents (~31 tests)
 ```
 
 ## Dual-Mode Design
@@ -173,7 +176,7 @@ def _dispatch_chat(self, user_msg):
 - `bin/kodiqa` — shell script that runs venv Python directly
 - `pyproject.toml` — pip-installable package with `kodiqa` entry point
 - Install: `pip install .` or `pip install -e .` (editable)
-- Current version: v1.7.0
+- Current version: v2.0.0
 
 ## Key Patterns
 
@@ -271,7 +274,7 @@ def _dispatch_chat(self, user_msg):
 - `~/.kodiqa/exports/` — exported session markdown files
 - `~/.kodiqa/error.log` — error log
 
-### Slash Commands (34 total)
+### Slash Commands (49 total)
 | Command | Description |
 |---------|-------------|
 | `/model <name>` | Switch model (interactive picker if no arg) |
@@ -304,6 +307,23 @@ def _dispatch_chat(self, user_msg):
 | `/undo [path]` | Undo last edit / list undo history |
 | `/diff [args]` | Show git diff (supports --staged etc.) |
 | `/lint <cmd>` | Set auto-lint command after edits (/lint off to disable) |
+| `/pin <path>` | Pin file to always include in context |
+| `/unpin <path>` | Remove pinned file |
+| `/alias <name> <cmd>` | Create command alias |
+| `/unalias <name>` | Remove command alias |
+| `/notify` | Toggle desktop notifications for long tasks |
+| `/optimizer` | Toggle cost optimizer tips |
+| `/theme <name>` | Switch UI theme (dark/light/dracula/monokai/nord) |
+| `/share` | Export session as styled HTML |
+| `/pr [title]` | Create GitHub PR via gh CLI |
+| `/review [number]` | Review PR diff via gh CLI |
+| `/issue [number]` | View GitHub issue via gh CLI |
+| `/init [template]` | Scaffold project from template |
+| `/plugins` | List/reload custom tool plugins |
+| `/agent <task>` | Spawn sub-agent for background task |
+| `/agents` | List running/completed sub-agents |
+| `/lsp [start\|stop]` | Start/stop Language Server Protocol |
+| `/voice` | Voice input via sox + Whisper |
 | `/help` | Show help |
 | `/quit` | Exit |
 
@@ -323,7 +343,7 @@ source ~/LLMS/kodiqa/venv/bin/activate && pytest -v
 - Python 3.9+, rich, beautifulsoup4, requests, prompt_toolkit, pytest (dev)
 - Ollama installed at `/Applications/Ollama.app`
 - Virtual environment at `./venv/`
-- Current version: v1.7.0
+- Current version: v2.0.0
 
 ### Adding a New Tool
 1. Add the handler function `do_<name>()` in `actions.py`
