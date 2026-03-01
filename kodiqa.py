@@ -683,7 +683,18 @@ class Kodiqa:
         elif is_qwen_api_model(self.model):
             provider = "[blue]Qwen API[/]"
         else:
-            provider = "[green]Local/Ollama[/]"
+            # Check if the local model actually exists
+            local_ok = False
+            try:
+                resp = requests.get(f"{OLLAMA_URL}/api/tags", timeout=3)
+                installed = [m["name"] for m in resp.json().get("models", [])]
+                local_ok = any(m.startswith(self.model.split(":")[0]) for m in installed)
+            except Exception:
+                pass
+            if local_ok:
+                provider = "[green]Local/Ollama[/]"
+            else:
+                provider = "[red]not installed[/]"
         git_line = ""
         if self.git_info:
             g = self.git_info
@@ -699,6 +710,16 @@ class Kodiqa:
             f"Type [bold]/help[/] for commands, [bold]/single[/] for single model",
             border_style="green",
         ))
+        # Guide user if model isn't available
+        if provider == "[red]not installed[/]":
+            if self.claude_key or self.qwen_key:
+                self.console.print("[yellow]Local model not found.[/] Use [bold]/model[/] to pick a cloud model.")
+            else:
+                self.console.print(
+                    "[yellow]No local models found.[/] Either:\n"
+                    "  • Pull a model: [bold]ollama pull qwen3-coder[/]\n"
+                    "  • Add an API key: [bold]/key[/]"
+                )
 
     def _quit(self):
         self._save_session()
