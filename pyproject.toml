@@ -1,3 +1,32 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kodiqa"
+version = "1.0.0"
+description = "Local AI coding agent — Claude Code clone with Ollama, Claude API, and Qwen API"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+dependencies = [
+    "rich>=13.0",
+    "beautifulsoup4>=4.12",
+    "requests>=2.31",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
+[project.scripts]
+kodiqa = "kodiqa:main"
+
+[project.urls]
+Repository = "https://github.com/eniz1806/Kodiqa-agent"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+
+[tool.setuptools]
+py-modules = ["kodiqa", "actions", "tools", "config", "web", "memory", "mcp"]
