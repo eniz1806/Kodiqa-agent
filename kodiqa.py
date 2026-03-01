@@ -1195,7 +1195,23 @@ class Kodiqa:
         if provider == "qwen":
             self._setup_qwen_key()
             return
-        self._setup_claude_key()
+        if provider == "claude":
+            self._setup_claude_key()
+            return
+        # No provider specified — ask which one
+        claude_status = "[green]set[/]" if self.claude_key else "[dim]not set[/]"
+        qwen_status = "[green]set[/]" if self.qwen_key else "[dim]not set[/]"
+        self.console.print(f"  1. Claude API ({claude_status})")
+        self.console.print(f"  2. Qwen API  ({qwen_status})")
+        try:
+            choice = Prompt.ask("[bold]Which provider?[/]", choices=["1", "2", "claude", "qwen"], default="1")
+        except (EOFError, KeyboardInterrupt):
+            self.console.print("\n[dim]Cancelled.[/]")
+            return
+        if choice in ("2", "qwen"):
+            self._setup_qwen_key()
+        else:
+            self._setup_claude_key()
 
     def _setup_claude_key(self):
         if self.claude_key:
