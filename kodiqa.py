@@ -3,17 +3,11 @@
 
 import json
 import os
-try:
-    import readline
-except ImportError:
-    import types
-    readline = types.SimpleNamespace(
-        read_history_file=lambda *a: None, write_history_file=lambda *a: None,
-        set_history_length=lambda *a: None, set_completer=lambda *a: None,
-        set_completer_delims=lambda *a: None, parse_and_bind=lambda *a: None,
-        get_line_buffer=lambda: "",
-    )
 import sys
+from prompt_toolkit import PromptSession
+from prompt_toolkit.completion import Completer, Completion
+from prompt_toolkit.history import FileHistory
+from prompt_toolkit.styles import Style as PTStyle
 import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", message=".*urllib3.*")
@@ -297,6 +291,78 @@ class StreamWriter:
             self._in_fence = False
 
 
+class KodiqaCompleter(Completer):
+    """Tab completer for slash commands, model aliases, modes, and file paths."""
+
+    def __init__(self, agent):
+        self.agent = agent
+
+    def _complete_path(self, text):
+        """Yield path completions."""
+        expanded = os.path.expanduser(text)
+        if os.path.isdir(expanded) and not expanded.endswith("/"):
+            expanded += "/"
+        dirname = os.path.dirname(expanded) or "."
+        basename = os.path.basename(expanded)
+        try:
+            entries = os.listdir(dirname)
+        except OSError:
+            return
+        for entry in sorted(entries):
+            if entry.startswith(".") and not basename.startswith("."):
+                continue
+            if entry.startswith(basename):
+                full = os.path.join(dirname, entry)
+                if text.startswith("~"):
+                    result = "~" + full[len(os.path.expanduser("~")):]
+                else:
+                    result = full
+                if os.path.isdir(full):
+                    result += "/"
+                yield Completion(result, start_position=-len(text))
+
+    def get_completions(self, document, complete_event):
+        text = document.text_before_cursor
+        word = document.get_word_before_cursor(WORD=True)
+        try:
+            if text.lstrip().startswith("/"):
+                if " " not in text.strip():
+                    # Complete slash command itself
+                    for cmd in self.agent._SLASH_COMMANDS:
+                        if cmd.startswith(text.lstrip()):
+                            yield Completion(cmd, start_position=-len(text.lstrip()))
+                else:
+                    # Context-aware argument completion
+                    cmd = text.strip().split()[0]
+                    if cmd in ("/model",):
+                        all_aliases = list(MODEL_ALIASES.keys()) + list(CLAUDE_ALIASES.keys()) + list(QWEN_ALIASES.keys())
+                        for a in all_aliases:
+                            if a.startswith(word):
+                                yield Completion(a, start_position=-len(word))
+                    elif cmd in ("/mode",):
+                        for m in ("default", "relaxed", "auto"):
+                            if m.startswith(word):
+                                yield Completion(m, start_position=-len(word))
+                    elif cmd in ("/search",):
+                        for e in ("duckduckgo", "google", "api"):
+                            if e.startswith(word):
+                                yield Completion(e, start_position=-len(word))
+                    elif cmd in ("/cd", "/scan"):
+                        yield from self._complete_path(word)
+                    elif cmd in ("/restore",):
+                        for n in self.agent._checkpoints.keys():
+                            if n.startswith(word):
+                                yield Completion(n, start_position=-len(word))
+                    else:
+                        yield from self._complete_path(word)
+            else:
+                # File paths
+                if word.startswith(("/", "~", ".")) or "/" in word:
+                    yield from self._complete_path(word)
+        except Exception:
+            return
+
+
 class Kodiqa:
     def __init__(self):
         self.console = Console()
@@ -313,19 +379,19 @@ class Kodiqa:
         self.multi_models = self._discover_models()  # default: multi-model mode
         self._auto_approved = set()  # action types auto-approved this session
         self.session_tokens = {"input": 0, "output": 0, "cache_read": 0, "cache_creation": 0, "cost": 0.0}
-        # Setup readline for arrow keys + input history + tab completion
+        # Setup prompt_toolkit for Claude Code-style UI
         self._history_file = os.path.join(KODIQA_DIR, "input_history")
-        try:
-            readline.read_history_file(self._history_file)
-        except (FileNotFoundError, OSError):
-            pass
-        try:
-            readline.set_history_length(500)
-            readline.set_completer(self._completer)
-            readline.set_completer_delims(" \t")
-            readline.parse_and_bind("tab: complete")
-        except Exception:
-            pass
+        self._pt_style = PTStyle.from_dict({
+            'prompt': '#af5fff bold',
+            'bottom-toolbar': 'bg:#282828 #999999',
+            'bottom-toolbar.text': '#999999',
+            'separator': '#666666',
+        })
+        self._pt_session = PromptSession(
+            history=FileHistory(self._history_file),
+            completer=KodiqaCompleter(self),
+            style=self._pt_style,
+        )
         self.qwen_key = self.settings.get("qwen_api_key", "")
         # Load Google API keys if saved
         g_key = self.settings.get("google_api_key", "")
@@ -372,67 +438,6 @@ class Kodiqa:
         "/plan", "/accept", "/search", "/cd", "/branch", "/mcp", "/help", "/quit",
     ]
 
-    def _completer(self, text, state):
-        """Readline tab completer for slash commands and file paths."""
-        try:
-            buf = readline.get_line_buffer().lstrip()
-            if buf.startswith("/"):
-                # Slash command completion
-                if " " not in buf:
-                    # Completing the command itself
-                    matches = [c + " " for c in self._SLASH_COMMANDS if c.startswith(text)]
-                else:
-                    # Completing argument — context-aware
-                    cmd = buf.split()[0]
-                    if cmd in ("/model",):
-                        all_aliases = list(MODEL_ALIASES.keys()) + list(CLAUDE_ALIASES.keys()) + list(QWEN_ALIASES.keys())
-                        matches = [a for a in all_aliases if a.startswith(text)]
-                    elif cmd in ("/mode",):
-                        matches = [m for m in ("default", "relaxed", "auto") if m.startswith(text)]
-                    elif cmd in ("/search",):
-                        matches = [e for e in ("duckduckgo", "google", "api") if e.startswith(text)]
-                    elif cmd in ("/cd", "/scan"):
-                        matches = self._complete_path(text)
-                    elif cmd in ("/restore",):
-                        matches = [n for n in self._checkpoints.keys() if n.startswith(text)]
-                    else:
-                        matches = self._complete_path(text)
-            else:
-                # Regular text — complete file paths if it looks like a path
-                if text.startswith(("/", "~", ".")) or "/" in text:
-                    matches = self._complete_path(text)
-                else:
-                    return None
-            return matches[state] if state < len(matches) else None
-        except Exception:
-            return None
-
-    def _complete_path(self, text):
-        """Complete file/directory paths."""
-        expanded = os.path.expanduser(text)
-        if os.path.isdir(expanded) and not expanded.endswith("/"):
-            expanded += "/"
-        dirname = os.path.dirname(expanded) or "."
-        basename = os.path.basename(expanded)
-        try:
-            entries = os.listdir(dirname)
-        except OSError:
-            return []
-        matches = []
-        for entry in sorted(entries):
-            if entry.startswith(".") and not basename.startswith("."):
-                continue
-            if entry.startswith(basename):
-                full = os.path.join(dirname, entry)
-                # Replace expanded prefix back with original (keep ~ if used)
-                if text.startswith("~"):
-                    result = "~" + full[len(os.path.expanduser("~")):]
-                else:
-                    result = full
-                if os.path.isdir(full):
-                    result += "/"
-                matches.append(result)
-        return matches
 
     def _discover_models(self):
         """Auto-discover all installed Ollama models for multi-mode default."""
@@ -482,9 +487,11 @@ class Kodiqa:
         try:
             while True:
                 try:
-                    self.console.print()
-                    self._print_status_bar()
-                    user_input = input("\033[1;35m❯ \033[0m")
+                    w = os.get_terminal_size().columns
+                    user_input = self._pt_session.prompt(
+                        [('class:separator', '─' * w + '\n'), ('class:prompt', '❯ ')],
+                        reserve_space_for_menu=0,
+                    )
                 except (EOFError, KeyboardInterrupt):
                     self._quit()
                     return
@@ -496,23 +503,6 @@ class Kodiqa:
                     self._chat(user_input)
         except KeyboardInterrupt:
             self._quit()
-
-    def _print_status_bar(self):
-        """Print Claude Code-style status bar below the prompt."""
-        parts = []
-        # Accept edits indicator
-        if self.batch_edits:
-            parts.append("[magenta]❯❯[/] [dim]accept edits on[/]")
-        else:
-            parts.append("[magenta]❯❯[/] [dim]accept edits off[/]")
-        # Plan mode
-        if self.plan_mode:
-            parts.append("[yellow]plan mode[/]")
-        # Permission mode (only show if not default)
-        if self.permission_mode != "default":
-            mode_labels = {"relaxed": "[cyan]relaxed[/]", "auto": "[cyan]auto[/]"}
-            parts.append(mode_labels.get(self.permission_mode, self.permission_mode))
-        self.console.print(f"  {'  '.join(parts)}")
 
     def _first_run_setup(self):
         if "setup_done" in self.settings:
@@ -713,10 +703,6 @@ class Kodiqa:
         self._save_session()
         self.memory.close()
         self.mcp.stop_all()
-        try:
-            readline.write_history_file(self._history_file)
-        except Exception:
-            pass
         # Always stop Ollama on quit — no need to leave it running
         import subprocess
         try:
@@ -2003,7 +1989,7 @@ class Kodiqa:
                     results.append(f"[Edit Review]\n{rr}")
             set_batch_mode(False)
             self.history.append({"role": "user", "content": f"[Action Results]\n" + "\n\n".join(results)})
-            if iteration < MAX_ITERATIONS - 1:
+            if iteration > 0 and iteration < MAX_ITERATIONS - 1:
                 self.console.print(f"  [dim]({iteration + 1}/{MAX_ITERATIONS} iterations)[/]")
         else:
             self.console.print(f"[yellow]Reached max iterations ({MAX_ITERATIONS}). Stopping.[/]")
@@ -2129,7 +2115,7 @@ class Kodiqa:
             self.history.append({"role": "user", "content": tool_results})
             self._save_session()
 
-            if iteration < MAX_ITERATIONS - 1:
+            if iteration > 0 and iteration < MAX_ITERATIONS - 1:
                 self.console.print(f"  [dim]({iteration + 1}/{MAX_ITERATIONS} iterations)[/]")
 
         else:
@@ -2499,7 +2485,7 @@ class Kodiqa:
                 })
             self._save_session()
 
-            if iteration < MAX_ITERATIONS - 1:
+            if iteration > 0 and iteration < MAX_ITERATIONS - 1:
                 self.console.print(f"  [dim]({iteration + 1}/{MAX_ITERATIONS} iterations)[/]")
         else:
             self.console.print(f"[yellow]Reached max iterations ({MAX_ITERATIONS}). Stopping.[/]")
@@ -2982,25 +2968,26 @@ class Kodiqa:
         selected = default
         fd = sys.stdin.fileno()
         old_settings = termios.tcgetattr(fd)
+        n = len(options)
 
         def render():
-            # Move cursor up to overwrite previous render (except first time)
             for i, (label, desc) in enumerate(options):
                 if i == selected:
-                    console.print(f"    [bold cyan]❯[/] [bold]{label}[/]{' [dim]' + desc + '[/]' if desc else ''}")
+                    line = f"    \033[1;36m❯\033[0m \033[1m{label}\033[0m"
+                    if desc:
+                        line += f" \033[2m{desc}\033[0m"
                 else:
-                    console.print(f"      [dim]{label}{' — ' + desc if desc else ''}[/]")
-
-        def clear_options():
-            # Move up and clear each line
-            n = len(options)
-            sys.stdout.write(f"\033[{n}A")  # move up
-            for _ in range(n):
-                sys.stdout.write("\033[2K\n")  # clear line
-            sys.stdout.write(f"\033[{n}A")  # move back up
+                    line = f"      \033[2m{label}"
+                    if desc:
+                        line += f" — {desc}"
+                    line += "\033[0m"
+                sys.stdout.write(f"\r\033[K{line}\n")
             sys.stdout.flush()
 
         try:
+            # Save cursor position, render options
+            sys.stdout.write("\033[s")
+            sys.stdout.flush()
             render()
             tty.setraw(fd)
             while True:
@@ -3015,21 +3002,22 @@ class Kodiqa:
                     if ch2 == "[":
                         ch3 = sys.stdin.read(1)
                         if ch3 == "A":  # Up
-                            selected = (selected - 1) % len(options)
+                            selected = (selected - 1) % n
                         elif ch3 == "B":  # Down
-                            selected = (selected + 1) % len(options)
+                            selected = (selected + 1) % n
                 elif ch == "k":  # vim up
-                    selected = (selected - 1) % len(options)
+                    selected = (selected - 1) % n
                 elif ch == "j":  # vim down
-                    selected = (selected + 1) % len(options)
+                    selected = (selected + 1) % n
                 elif ch in ("1", "2", "3", "4", "5"):
                     idx = int(ch) - 1
-                    if idx < len(options):
+                    if idx < n:
                         selected = idx
                         break
-                # Re-render
+                # Restore cursor, re-render in place
                 termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-                clear_options()
+                sys.stdout.write("\033[u")
+                sys.stdout.flush()
                 render()
                 tty.setraw(fd)
         except (EOFError, OSError):

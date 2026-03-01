@@ -46,7 +46,9 @@ def apply_queued_edit(index):
     if index < 0 or index >= len(_edit_queue):
         return "Invalid edit index"
     entry = _edit_queue[index]
-    path = entry["path"]
+    path = entry.get("path", "")
+    if not path:
+        return "Error: empty file path — skipped"
     # Save to undo buffer
     old = entry.get("old_content", "")
     _undo_buffer[os.path.abspath(path)].append(old if old else None)
@@ -346,7 +348,11 @@ def do_read_file(path):
 
 
 def do_write_file(path, content):
+    if not path or not path.strip():
+        return "Error: file path is required — cannot write to an empty path."
     path = os.path.expanduser(path)
+    if not content:
+        return "Error: content is required — cannot write empty content."
     old_content = ""
     if os.path.isfile(path):
         try:
@@ -378,6 +384,8 @@ def do_write_file(path, content):
 
 
 def do_edit_file(path, old_text, new_text):
+    if not path or not path.strip():
+        return "Error: file path is required — cannot edit an empty path."
     path = os.path.expanduser(path)
     if not os.path.isfile(path):
         return f"File not found: {path}"
