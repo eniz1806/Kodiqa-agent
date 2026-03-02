@@ -1,0 +1,44 @@
+name: Feature Request
+description: Suggest a new feature for Kodiqa
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for suggesting a feature! Please describe your idea below.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or motivation
+      description: What problem does this solve, or why would this be useful?
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: How would you like this to work? Include slash command names, UI behavior, etc.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any other approaches you considered?
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of Kodiqa does this relate to?
+      options:
+        - Core agent / chat loop
+        - Tools (file ops, search, git, web, etc.)
+        - UI (prompt, themes, streaming)
+        - API providers
+        - Slash commands
+        - MCP / plugins
+        - Testing
+        - Documentation
+        - Other
+    validations:
+      required: true

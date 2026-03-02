@@ -7,8 +7,31 @@ name = "kodiqa"
 version = "3.2.0"
 description = "AI coding agent that runs anywhere — 7 providers, 26 tools, plugins, sub-agents, LSP, themes, RAG, 69 commands"
 readme = "README.md"
-license = {text = "MIT"}
+license = {text = "GPL-3.0-only"}
 requires-python = ">=3.9"
+authors = [
+    {name = "eniz1806"},
+]
+keywords = [
+    "ai", "coding-agent", "llm", "ollama", "claude", "openai",
+    "deepseek", "groq", "mistral", "qwen", "cli", "developer-tools",
+    "code-assistant", "mcp",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development",
+    "Topic :: Software Development :: Code Generators",
+]
 dependencies = [
     "rich>=13.0",
     "beautifulsoup4>=4.12",
@@ -23,7 +46,10 @@ dev = ["pytest>=7.0"]
 kodiqa = "kodiqa:main"
 
 [project.urls]
+Homepage = "https://github.com/eniz1806/Kodiqa-agent"
 Repository = "https://github.com/eniz1806/Kodiqa-agent"
+Issues = "https://github.com/eniz1806/Kodiqa-agent/issues"
+Changelog = "https://github.com/eniz1806/Kodiqa-agent/blob/main/CHANGELOG.md"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

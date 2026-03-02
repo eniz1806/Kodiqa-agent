@@ -270,6 +270,7 @@ PERSONAS = {
 }
 
 # ── Changelog ──
+# Canonical changelog is CHANGELOG.md — this list powers the /changelog command
 CHANGELOG = [
     {"version": "v3.2.0", "date": "2026-03-02", "changes": [
         "Auto lint-fix loop (/lint auto) — AI fixes lint errors automatically (max 3 iterations)",
