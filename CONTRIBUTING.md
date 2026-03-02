@@ -87,4 +87,4 @@ Use the [Bug Report](https://github.com/eniz1806/Kodiqa-agent/issues/new?templat
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the GPL-3.0 License.
+By contributing, you agree that your contributions will be licensed under the AGPL-3.0 License.
