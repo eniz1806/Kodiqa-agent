@@ -189,8 +189,10 @@ def _dispatch_chat(self, user_msg):
 ### Global Install
 - `bin/kodiqa` — shell script that runs venv Python directly
 - `pyproject.toml` — pip-installable package with `kodiqa` entry point
-- Install: `pip install .` or `pip install -e .` (editable)
+- Install: `pip install kodiqa` (PyPI) or `pip install -e .` (editable)
 - Current version: v3.3.0 (AGPL-3.0)
+- PyPI: https://pypi.org/project/kodiqa/
+- Landing page: https://eniz1806.github.io/Kodiqa-agent/ (GitHub Pages, `docs/index.html`)
 
 ## Key Patterns
 

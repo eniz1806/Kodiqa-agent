@@ -62,9 +62,9 @@
 | **Session recovery** | Yes (auto-save) | Yes | No | No | Yes (multi-session) |
 | **Custom agents** | Yes (sub-agents) | No | No | No | Yes |
 | **Desktop app / IDE** | No | Yes (VS Code) | No | No | Yes (VS Code, desktop) |
-| **Install** | `pip install .` | `npm install -g` | `pip install` | `npm install -g` | `go install` / `npm` |
+| **Install** | `pip install kodiqa` | `npm install -g` | `pip install` | `npm install -g` | `go install` / `npm` |
 | **Language** | Python | TypeScript | Python | TypeScript | Go |
-| **Tests** | 232 | Yes | Yes | Yes | Yes |
+| **Tests** | 284 | Yes | Yes | Yes | Yes |
 | **Open source** | Yes (AGPL-3.0) | Yes (Apache-2.0) | Yes (Apache-2.0) | Yes (Apache-2.0) | Yes (MIT) |
 
 **Kodiqa's unique advantages**: free local models, 7 API providers, multi-model consensus, custom plugins, sub-agents, LSP integration, 5 themes, project templates, batch edit review, conversation branching, budget limits, auto-lint, and auto model discovery — features no other agent offers together.
@@ -72,13 +72,15 @@
 ## Install
 
 ```bash
+pip install kodiqa
+kodiqa
+```
+
+Or from source:
+```bash
 git clone https://github.com/eniz1806/Kodiqa-agent.git
 cd Kodiqa-agent
 pip install .
-```
-
-Then run from any directory:
-```
 kodiqa
 ```
 
