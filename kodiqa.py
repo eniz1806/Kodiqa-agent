@@ -3546,6 +3546,7 @@ class Kodiqa:
                 except Exception:
                     detail = resp.text[:200]
                 self.console.print(f"[red]{prov['label']} API error {resp.status_code}: {detail}[/]")
+                self.console.print(f"[dim]Model: {self.model} | Endpoint: {prov['url']}[/]")
                 return None
         except Exception as e:
             if _logger:
