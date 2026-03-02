@@ -140,6 +140,55 @@ CLAUDE_SYSTEM = """You are Kodiqa, an expert AI coding assistant running locally
 {memories}"""
 
 
+class StreamStallIndicator:
+    """Shows a subtle spinner when streaming stalls (no chunks for 2+ seconds)."""
+
+    DOTS = ["\u28fe", "\u28fd", "\u28fb", "\u28f7", "\u28ef", "\u28df", "\u28bf", "\u287f"]
+
+    def __init__(self, console, stall_seconds=2.0):
+        self.console = console
+        self.stall_seconds = stall_seconds
+        self._last_ping = time.time()
+        self._stop = threading.Event()
+        self._showing = False
+        self._thread = threading.Thread(target=self._monitor, daemon=True)
+        self._thread.start()
+
+    def ping(self):
+        """Call this each time a chunk arrives."""
+        was_showing = self._showing
+        self._last_ping = time.time()
+        if was_showing:
+            self._showing = False
+            # Clear the stall indicator
+            self.console.file.write("\r\033[K")
+            self.console.file.flush()
+
+    def stop(self):
+        self._stop.set()
+        if self._showing:
+            self.console.file.write("\r\033[K")
+            self.console.file.flush()
+            self._showing = False
+        self._thread.join(timeout=1)
+
+    def _monitor(self):
+        frame = 0
+        while not self._stop.is_set():
+            self._stop.wait(0.2)
+            if self._stop.is_set():
+                break
+            elapsed = time.time() - self._last_ping
+            if elapsed >= self.stall_seconds:
+                if not self._showing:
+                    self._showing = True
+                dot = self.DOTS[frame % len(self.DOTS)]
+                secs = int(elapsed)
+                self.console.file.write(f"\r\033[K  \033[2m{dot} waiting for response... {secs}s\033[0m")
+                self.console.file.flush()
+                frame += 1
+
+
 class StreamWriter:
     """Filters streaming output: shows text, hides code blocks in compact mode."""
 
@@ -3049,6 +3098,7 @@ class Kodiqa:
         stream_usage = {}
         first_token = True
         writer = StreamWriter(self.console, compact=self.compact_mode)
+        stall = StreamStallIndicator(self.console)
         thinking_status = Status("  [dim]Thinking...[/]", console=self.console, spinner="dots")
         thinking_status.start()
         cleanup = self._start_stream_interrupt()
@@ -3070,6 +3120,7 @@ class Kodiqa:
                     event = json.loads(data)
                 except json.JSONDecodeError:
                     continue
+                stall.ping()
 
                 event_type = event.get("type", "")
 
@@ -3128,6 +3179,7 @@ class Kodiqa:
             self._stream_interrupted = True
         finally:
             cleanup()
+            stall.stop()
 
         if self._stream_interrupted:
             thinking_status.stop()
@@ -3470,6 +3522,7 @@ class Kodiqa:
         stream_usage = {}
         first_token = True
         writer = StreamWriter(self.console, compact=self.compact_mode)
+        stall = StreamStallIndicator(self.console)
         thinking_status = Status("  [dim]Thinking...[/]", console=self.console, spinner="dots")
         thinking_status.start()
         cleanup = self._start_stream_interrupt()
@@ -3491,6 +3544,7 @@ class Kodiqa:
                     chunk = json.loads(data)
                 except json.JSONDecodeError:
                     continue
+                stall.ping()
 
                 # Capture usage from final chunk
                 usage_data = chunk.get("usage")
@@ -3534,6 +3588,7 @@ class Kodiqa:
         except KeyboardInterrupt:
             self._stream_interrupted = True
         finally:
+            stall.stop()
             cleanup()
 
         if self._stream_interrupted:
@@ -3701,6 +3756,7 @@ class Kodiqa:
         first_token = True
         token_count = 0
         writer = StreamWriter(self.console, compact=self.compact_mode)
+        stall = StreamStallIndicator(self.console)
         thinking_status = Status("  [dim]Thinking...[/]", console=self.console, spinner="dots")
         thinking_status.start()
         cleanup = self._start_stream_interrupt()
@@ -3715,6 +3771,7 @@ class Kodiqa:
                     chunk = json.loads(line)
                 except json.JSONDecodeError:
                     continue
+                stall.ping()
                 if chunk.get("done"):
                     break
                 token = chunk.get("message", {}).get("content", "")
@@ -3729,6 +3786,7 @@ class Kodiqa:
         except KeyboardInterrupt:
             self._stream_interrupted = True
         finally:
+            stall.stop()
             cleanup()
         if self._stream_interrupted:
             thinking_status.stop()
