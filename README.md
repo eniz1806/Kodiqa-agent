@@ -7,15 +7,15 @@
 </p>
 
 <p align="center">
-  <em>63 slash commands &bull; 26 tools &bull; RAG search &bull; custom personas &bull; plugins &bull; sub-agents &bull; LSP &bull; 5 themes</em>
+  <em>69 slash commands &bull; 26 tools &bull; RAG search &bull; custom personas &bull; plugins &bull; sub-agents &bull; LSP &bull; 5 themes</em>
 </p>
 
 <p align="center">
   <a href="#install"><img src="https://img.shields.io/badge/python-3.9+-blue?logo=python&logoColor=white" alt="Python 3.9+"/></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-purple" alt="License"/></a>
-  <a href="#testing"><img src="https://img.shields.io/badge/tests-232%20passing-brightgreen" alt="Tests"/></a>
+  <a href="#testing"><img src="https://img.shields.io/badge/tests-284%20passing-brightgreen" alt="Tests"/></a>
   <a href="#api-setup"><img src="https://img.shields.io/badge/providers-7-cyan" alt="7 Providers"/></a>
-  <a href="#26-tools"><img src="https://img.shields.io/badge/commands-63-orange" alt="63 Commands"/></a>
+  <a href="#26-tools"><img src="https://img.shields.io/badge/commands-69-orange" alt="69 Commands"/></a>
 </p>
 
 ---

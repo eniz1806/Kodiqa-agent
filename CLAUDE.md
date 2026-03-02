@@ -6,22 +6,23 @@ An open-source AI coding agent that runs anywhere — free locally with Ollama, 
 ## Architecture
 
 ```
-kodiqa.py    (~4970 lines)  Main agent: Kodiqa class, StreamWriter, StreamStallIndicator, KodiqaCompleter, prompt_toolkit UI, chat loops, slash commands, modes, MCP, branching, auto-discovery, workspace boundary, auto-commit, budget, lint, plugins, sub-agents, LSP, voice, themes
-actions.py   (~950 lines)   26 action handlers: file ops, git, search, web, memory, clipboard, multi_edit, edit queue + diff preview
+kodiqa.py    (~5500 lines)  Main agent: Kodiqa class, StreamWriter, StreamStallIndicator, KodiqaCompleter, prompt_toolkit UI, chat loops, slash commands, modes, MCP, branching, auto-discovery, workspace boundary, auto-commit, budget, lint, plugins, sub-agents, LSP, voice, themes, architect mode, headless mode, agent teams, repo map
+actions.py   (~1000 lines)  26 action handlers: file ops, git, search, web, memory, clipboard, multi_edit, edit queue + diff preview, hooks, sandbox
 tools.py     (~461 lines)   Tool schemas (Claude native format, converted to OpenAI format for OpenAI-compat providers)
-config.py    (~571 lines)   Constants, provider registry, model aliases, themes, personas, changelog, Qwen Coding Plan models, system prompt, config, .kodiqaignore
+config.py    (~575 lines)   Constants, provider registry, model aliases, themes, personas, changelog, Qwen Coding Plan models, system prompt, config, .kodiqaignore
 web.py       (~194 lines)   3 search engines (DuckDuckGo, Google scrape, Google API) + page fetcher
 memory.py    (82 lines)     SQLite-backed persistent memory store
 mcp.py       (~176 lines)   MCP client: MCPServer (stdio JSON-RPC transport) + MCPManager (multi-server)
 templates.py (61 lines)     5 project templates for /init command
 lsp.py       (~220 lines)   LSP client for Language Server Protocol integration
 embeddings.py (~93 lines)   SQLite-backed vector store for RAG search
+repomap.py   (~150 lines)  Tree-sitter/regex repo map and symbol extraction
 ```
 
 ## Test Suite
 
 ```
-tests/           232 tests, all passing (~0.3s)
+tests/           284 tests, all passing (~0.4s)
   conftest.py          Shared fixtures (sample_file, sample_tree, memory_store)
   test_parse_actions   Action parsing (~18 tests)
   test_config          Config functions + provider registry (~22 tests)
@@ -36,6 +37,7 @@ tests/           232 tests, all passing (~0.3s)
   test_new_features    Thinking, branching, slash commands (~16 tests)
   test_features_v2     Themes, pin, alias, optimizer, templates, LSP, plugins, agents (~31 tests)
   test_features_v3     Changelog, stats, personas, profiles, refactor, history, embeddings, diagrams (~36 tests)
+  test_features_v4     Lint-fix, test-fix, hooks, watch triggers, architect, headless, worktree, sandbox, repomap, teams (~45 tests)
 ```
 
 ## Dual-Mode Design
@@ -188,7 +190,7 @@ def _dispatch_chat(self, user_msg):
 - `bin/kodiqa` — shell script that runs venv Python directly
 - `pyproject.toml` — pip-installable package with `kodiqa` entry point
 - Install: `pip install .` or `pip install -e .` (editable)
-- Current version: v3.1.0
+- Current version: v3.2.0
 
 ## Key Patterns
 
@@ -286,7 +288,7 @@ def _dispatch_chat(self, user_msg):
 - `~/.kodiqa/exports/` — exported session markdown files
 - `~/.kodiqa/error.log` — error log
 
-### Slash Commands (63 total)
+### Slash Commands (69 total)
 | Command | Description |
 |---------|-------------|
 | `/model <name>` | Switch model (interactive picker if no arg) |
@@ -350,6 +352,12 @@ def _dispatch_chat(self, user_msg):
 | `/rag <query>` | RAG search + AI answer |
 | `/debug <script>` | Run script, catch errors, debug with AI |
 | `/diagram <desc>` | Generate Mermaid diagram |
+| `/test-fix <cmd>` | Auto test-fix loop (run → AI fix → re-run, max 3) |
+| `/architect <p> <i>` | Architect mode: strong model plans, cheap implements |
+| `/sandbox [on\|off]` | Toggle OS-level command sandboxing |
+| `/map [path]` | Repository map with symbol extraction |
+| `/team <task>` | Spawn agent team (coordinator + workers) |
+| `/teams` | List running/completed agent teams |
 | `/help` | Show help |
 | `/quit` | Exit |
 
@@ -369,7 +377,7 @@ source ~/LLMS/kodiqa/venv/bin/activate && pytest -v
 - Python 3.9+, rich, beautifulsoup4, requests, prompt_toolkit, pytest (dev)
 - Ollama installed at `/Applications/Ollama.app`
 - Virtual environment at `./venv/`
-- Current version: v2.0.0
+- Current version: v3.2.0
 
 ### Adding a New Tool
 1. Add the handler function `do_<name>()` in `actions.py`

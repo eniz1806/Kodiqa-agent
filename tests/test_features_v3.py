@@ -413,4 +413,4 @@ class TestAtFileReferences:
 class TestCommandCount:
     def test_total_slash_commands(self):
         from kodiqa import Kodiqa
-        assert len(Kodiqa._SLASH_COMMANDS) >= 63
+        assert len(Kodiqa._SLASH_COMMANDS) >= 69

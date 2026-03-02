@@ -39,7 +39,7 @@ from memory import MemoryStore
 from actions import (
     parse_actions, execute_action, execute_tool_call, execute_tools_parallel, set_console,
     set_batch_mode, get_edit_queue, clear_edit_queue, apply_queued_edit, reject_queued_edit,
-    do_undo_edit, _undo_buffer,
+    do_undo_edit, _undo_buffer, set_hooks, set_sandbox,
 )
 from web import set_search_engine, get_search_engine, set_google_api_keys, get_google_api_keys
 from tools import CLAUDE_TOOLS
@@ -470,6 +470,7 @@ class Kodiqa:
     def __init__(self):
         self.console = Console()
         set_console(self.console)  # share console with actions.py for diff display
+        set_hooks(load_config().get("hooks", {}))
         self.memory = MemoryStore()
         self.history = []
         self.cwd = os.getcwd()
@@ -550,6 +551,7 @@ class Kodiqa:
         self._budget_exceeded = False
         # Auto-lint command after edits
         self.lint_cmd = ""
+        self.lint_auto_fix = False
         # Pinned files — always in context
         self._pinned_files = []
         # Desktop notifications for long tasks
@@ -565,6 +567,9 @@ class Kodiqa:
         # Sub-agents
         self._agents = {}
         self._agent_counter = 0
+        # Agent teams
+        self._teams = {}
+        self._team_counter = 0
         # LSP client
         self._lsp_client = None
         # v3.0 features
@@ -578,6 +583,13 @@ class Kodiqa:
             "start_time": time.time(),
         }
         self._watchers = {}
+        self._ai_trigger_queue = []
+        self.headless = False
+        self.sandbox_enabled = False
+        # Architect mode: strong model plans, cheap model implements
+        self.architect_mode = False
+        self._architect_model = None
+        self._impl_model = None
         # Load .kodiqaignore
         self._load_kodiqaignore()
 
@@ -592,9 +604,10 @@ class Kodiqa:
         "/pin", "/unpin", "/alias", "/unalias", "/notify", "/optimizer", "/theme",
         "/share", "/pr", "/review", "/issue", "/init", "/plugins",
         "/agent", "/agents", "/lsp", "/voice",
-        "/changelog", "/stats", "/review-local", "/test", "/persona", "/patch",
+        "/changelog", "/stats", "/review-local", "/test", "/test-fix", "/persona", "/patch",
         "/profile", "/refactor", "/history", "/watch", "/embed", "/rag",
         "/debug", "/diagram",
+        "/architect", "/sandbox", "/map", "/team", "/teams",
         "/help", "/quit",
     ]
 
@@ -819,6 +832,37 @@ class Kodiqa:
             parts.append(f"\n### {f['rel_path']}\n```\n{f['content']}\n```")
         return "\n".join(parts)
 
+    def run_headless(self, task, output_file=None):
+        """Run a task non-interactively. No prompt, auto-approve everything."""
+        self.headless = True
+        self.permission_mode = "auto"
+        self.batch_edits = False
+        self._detect_git()
+        self.console.print(f"[cyan]Headless mode[/] — model: {self.model}")
+        self.console.print(f"[cyan]Task:[/] {task}")
+        try:
+            self._chat(task)
+        except Exception as e:
+            self.console.print(f"[red]Headless error: {e}[/]")
+        finally:
+            if output_file:
+                try:
+                    with open(output_file, 'w') as f:
+                        f.write(f"# Kodiqa Headless Output\n\nModel: {self.model}\nTask: {task}\n\n")
+                        for msg in self.history:
+                            role = msg.get("role", "?")
+                            content = msg.get("content", "")
+                            if isinstance(content, str):
+                                f.write(f"## {role}\n{content}\n\n")
+                            elif isinstance(content, list):
+                                for block in content:
+                                    if isinstance(block, dict) and block.get("type") == "text":
+                                        f.write(f"## {role}\n{block['text']}\n\n")
+                    self.console.print(f"[green]Output saved to: {output_file}[/]")
+                except Exception as e:
+                    self.console.print(f"[red]Error writing output: {e}[/]")
+            self._save_session()
+
     def run(self):
         self._first_run_setup()
         self._detect_git()
@@ -839,6 +883,14 @@ class Kodiqa:
                 except (EOFError, KeyboardInterrupt):
                     self._quit()
                     return
+                # Process queued AI triggers from file watchers
+                if not user_input.strip() and self._ai_trigger_queue:
+                    trigger = self._ai_trigger_queue.pop(0)
+                    rel = os.path.relpath(trigger["file"], self.cwd)
+                    self.console.print(f"  [magenta]⚡ Processing AI trigger:[/] {rel}:{trigger['line']}")
+                    self._remove_ai_trigger(trigger["file"], trigger["line"])
+                    self._chat(f"In file {rel}, execute this instruction: {trigger['instruction']}\nRead the file first to understand the context.")
+                    continue
                 if not user_input.strip():
                     continue
                 if user_input.strip().lower() in ("quit", "exit"):
@@ -1730,6 +1782,7 @@ class Kodiqa:
         elif command == "/config":
             if arg.strip().lower() == "reload":
                 self.config = load_config()
+                set_hooks(self.config.get("hooks", {}))
                 self.console.print("[green]Config reloaded.[/]")
             else:
                 self.console.print(Panel(
@@ -1818,6 +1871,8 @@ class Kodiqa:
                 self.plan_mode = False
                 self._pending_plan = None
                 self.console.print("[dim]Plan mode OFF — back to normal mode.[/]")
+        elif command == "/architect":
+            self._handle_architect(arg)
         elif command == "/accept":
             self.batch_edits = not self.batch_edits
             if self.batch_edits:
@@ -1884,15 +1939,38 @@ class Kodiqa:
         elif command == "/lint":
             if not arg:
                 if self.lint_cmd:
-                    self.console.print(f"Lint command: [cyan]{self.lint_cmd}[/]")
+                    auto = " [cyan](auto-fix ON)[/]" if self.lint_auto_fix else ""
+                    self.console.print(f"Lint command: [cyan]{self.lint_cmd}[/]{auto}")
                 else:
                     self.console.print("[dim]No lint command set. Usage: /lint <command>[/]")
+                self.console.print("[dim]  /lint auto — toggle auto-fix (AI fixes lint errors automatically)[/]")
             elif arg.strip().lower() == "off":
                 self.lint_cmd = ""
+                self.lint_auto_fix = False
                 self.console.print("[yellow]Auto-lint OFF[/]")
+            elif arg.strip().lower() == "auto":
+                self.lint_auto_fix = not self.lint_auto_fix
+                state = "ON" if self.lint_auto_fix else "OFF"
+                color = "green" if self.lint_auto_fix else "yellow"
+                self.console.print(f"[{color}]Auto lint-fix {state}[/] (max 3 iterations)")
             else:
                 self.lint_cmd = arg.strip()
                 self.console.print(f"[green]Auto-lint ON[/] — running [cyan]{self.lint_cmd}[/] after edits")
+        elif command == "/sandbox":
+            if arg and arg.strip().lower() == "on":
+                self.sandbox_enabled = True
+                from actions import set_sandbox
+                set_sandbox(True)
+                self.console.print("[green]Sandbox ON[/] — commands restricted to cwd + /tmp")
+            elif arg and arg.strip().lower() == "off":
+                self.sandbox_enabled = False
+                from actions import set_sandbox
+                set_sandbox(False)
+                self.console.print("[yellow]Sandbox OFF[/]")
+            else:
+                state = "[green]ON[/]" if self.sandbox_enabled else "[dim]OFF[/]"
+                self.console.print(f"Sandbox: {state}")
+                self.console.print("[dim]  /sandbox on | /sandbox off[/]")
         elif command == "/pin":
             if not arg:
                 if self._pinned_files:
@@ -2075,6 +2153,8 @@ class Kodiqa:
                 f"Cover all public functions/methods, edge cases, and error paths. "
                 f"Follow existing test patterns if any tests exist in this project."
             )
+        elif command == "/test-fix":
+            self._handle_test_fix(arg)
         elif command == "/persona":
             if not arg:
                 if self._persona:
@@ -2167,6 +2247,12 @@ class Kodiqa:
                 f"- Keep it clear and readable\n"
                 f"- If describing this project's code, read the relevant files first"
             )
+        elif command == "/map":
+            self._handle_map(arg)
+        elif command == "/team":
+            self._handle_team(arg)
+        elif command == "/teams":
+            self._handle_teams()
         else:
             # Check user-defined aliases before giving up
             aliases = self.settings.get("aliases", {})
@@ -2601,6 +2687,7 @@ class Kodiqa:
 
     def _chat(self, user_msg):
         self._session_stats["messages_sent"] += 1
+        self._lint_fix_count = 0
         self._auto_compact_if_needed()
 
         # Plan mode: intercept to handle planning flow
@@ -2635,6 +2722,53 @@ class Kodiqa:
                 f"Original request: {self._plan_request}"
             )
             self._plan_request = None
+
+        # Architect mode: strong model plans, cheap model implements
+        if self.architect_mode and not self.plan_mode:
+            original_model = self.model
+            # Phase 1: Plan with architect model
+            self.model = self._architect_model
+            self.console.print(f"  [cyan]Architect ({self._architect_model}) planning...[/]")
+            plan_prefix = (
+                "[ARCHITECT MODE - PLANNING] You are the architect. Explore the codebase and design "
+                "a detailed step-by-step implementation plan. Do NOT write or edit files yet. "
+                "List every file to create/modify, every function to add/change.\n\n"
+                "User request: "
+            )
+            old_mode = self.permission_mode
+            self.permission_mode = "default"
+            self._dispatch_chat(plan_prefix + user_msg)
+            self.permission_mode = old_mode
+            # Show approval
+            self.console.print()
+            self.console.print("  [bold magenta]Architect plan complete![/]")
+            options = [
+                ("Approve", f"implement with {self._impl_model}"),
+                ("Revise", "give feedback and re-plan"),
+                ("Reject", "cancel"),
+            ]
+            try:
+                choice = self._arrow_select(options, self.console, default=0)
+            except (EOFError, KeyboardInterrupt):
+                self.model = original_model
+                return
+            if choice == 0:
+                self.model = self._impl_model
+                self.console.print(f"  [green]Implementing with {self._impl_model}...[/]")
+                self._dispatch_chat(
+                    f"The architect has created a plan (see above). Now implement it step by step. "
+                    f"Original request: {user_msg}"
+                )
+                self.model = original_model
+            elif choice == 1:
+                self.model = original_model
+                feedback = input("\033[1;35m❯ \033[0m")
+                if feedback.strip():
+                    self._chat(f"{user_msg}\n\nArchitect feedback: {feedback}")
+            else:
+                self.model = original_model
+                self.console.print("[dim]Architect plan rejected.[/]")
+            return
 
         self._dispatch_chat(user_msg)
         # Send notification if task took >10s
@@ -2821,6 +2955,46 @@ class Kodiqa:
         except (EOFError, KeyboardInterrupt):
             self.plan_mode = False
             self._pending_plan = None
+
+    def _handle_architect(self, arg):
+        """Configure architect mode: strong model plans, cheap model implements."""
+        if not arg:
+            if self.architect_mode:
+                self.console.print(f"[cyan]Architect mode ON[/]")
+                self.console.print(f"  Planner:     [bold]{self._architect_model}[/]")
+                self.console.print(f"  Implementer: [bold]{self._impl_model}[/]")
+            else:
+                self.console.print("[dim]Usage: /architect <planner_model> <impl_model>[/]")
+                self.console.print("[dim]  Example: /architect opus haiku[/]")
+                self.console.print("[dim]  /architect off — disable[/]")
+            return
+        if arg.strip().lower() == "off":
+            self.architect_mode = False
+            self.console.print("[yellow]Architect mode OFF[/]")
+            return
+        parts = arg.strip().split()
+        if len(parts) < 2:
+            self.console.print("[dim]Need two models: /architect <planner> <implementer>[/]")
+            return
+        self._architect_model = self._resolve_model_name(parts[0])
+        self._impl_model = self._resolve_model_name(parts[1])
+        self.architect_mode = True
+        self.console.print(f"[green]Architect mode ON[/]")
+        self.console.print(f"  Planner:     [bold]{self._architect_model}[/]")
+        self.console.print(f"  Implementer: [bold]{self._impl_model}[/]")
+
+    def _resolve_model_name(self, name):
+        """Resolve a model alias to full model name."""
+        from config import CLAUDE_ALIASES, MODEL_ALIASES, OPENAI_COMPAT_PROVIDERS
+        if name in CLAUDE_ALIASES:
+            return CLAUDE_ALIASES[name]
+        if name in MODEL_ALIASES:
+            return MODEL_ALIASES[name]
+        for prov_data in OPENAI_COMPAT_PROVIDERS.values():
+            aliases = prov_data.get("aliases", {})
+            if name in aliases:
+                return aliases[name]
+        return name
 
     # ── Multi-model chat ──
 
@@ -3076,6 +3250,18 @@ class Kodiqa:
             if lint_errors:
                 results.append(f"[Lint Errors]\n{lint_errors}")
             self.history.append({"role": "user", "content": f"[Action Results]\n" + "\n\n".join(results)})
+            # Auto lint-fix: if enabled, inject fix request and continue loop
+            if lint_errors and self.lint_auto_fix:
+                if not hasattr(self, '_lint_fix_count'):
+                    self._lint_fix_count = 0
+                self._lint_fix_count += 1
+                if self._lint_fix_count <= 3:
+                    self.console.print(f"  [cyan]●[/] Auto lint-fix iteration {self._lint_fix_count}/3...")
+                    self.history.append({"role": "user", "content": f"Fix these lint errors (attempt {self._lint_fix_count}/3):\n{lint_errors}"})
+                    continue
+                else:
+                    self.console.print(f"  [yellow]●[/] Lint auto-fix: max iterations reached, still has errors.")
+                    self._lint_fix_count = 0
 
     # ── Claude chat (native tool_use API) ──
 
@@ -3226,6 +3412,18 @@ class Kodiqa:
 
             self.history.append({"role": "user", "content": tool_results})
             self._save_session()
+            # Auto lint-fix: if enabled, inject fix request and continue loop
+            if lint_errors and self.lint_auto_fix:
+                if not hasattr(self, '_lint_fix_count'):
+                    self._lint_fix_count = 0
+                self._lint_fix_count += 1
+                if self._lint_fix_count <= 3:
+                    self.console.print(f"  [cyan]●[/] Auto lint-fix iteration {self._lint_fix_count}/3...")
+                    self.history.append({"role": "user", "content": f"Fix these lint errors (attempt {self._lint_fix_count}/3):\n{lint_errors}"})
+                    continue
+                else:
+                    self.console.print(f"  [yellow]●[/] Lint auto-fix: max iterations reached, still has errors.")
+                    self._lint_fix_count = 0
 
     def _build_claude_messages(self):
         """Convert history to Claude API format. Handles content blocks properly."""
@@ -3641,6 +3839,18 @@ class Kodiqa:
                     "content": result,
                 })
             self._save_session()
+            # Auto lint-fix: if enabled, inject fix request and continue loop
+            if lint_errors and self.lint_auto_fix:
+                if not hasattr(self, '_lint_fix_count'):
+                    self._lint_fix_count = 0
+                self._lint_fix_count += 1
+                if self._lint_fix_count <= 3:
+                    self.console.print(f"  [cyan]●[/] Auto lint-fix iteration {self._lint_fix_count}/3...")
+                    self.history.append({"role": "user", "content": f"Fix these lint errors (attempt {self._lint_fix_count}/3):\n{lint_errors}"})
+                    continue
+                else:
+                    self.console.print(f"  [yellow]●[/] Lint auto-fix: max iterations reached, still has errors.")
+                    self._lint_fix_count = 0
 
     def _build_openai_messages(self, system_prompt):
         """Convert history to OpenAI message format for OpenAI-compatible APIs."""
@@ -4520,10 +4730,45 @@ class Kodiqa:
 
     # ── Phase 4: Sub-agents, LSP, Voice, Image Gen ──
 
+    def _create_agent_worktree(self, agent_id):
+        """Create a git worktree for isolated agent work."""
+        worktree_dir = os.path.join(self.cwd, ".kodiqa_worktrees", agent_id)
+        branch = f"kodiqa-{agent_id}"
+        try:
+            os.makedirs(os.path.dirname(worktree_dir), exist_ok=True)
+            subprocess.run(
+                ["git", "worktree", "add", "-b", branch, worktree_dir],
+                capture_output=True, text=True, timeout=10, cwd=self.cwd, check=True,
+            )
+            return worktree_dir
+        except Exception as e:
+            self.console.print(f"  [red]Worktree creation failed: {e}[/]")
+            return None
+
+    def _cleanup_agent_worktree(self, agent_id):
+        """Remove the git worktree for an agent."""
+        worktree_dir = os.path.join(self.cwd, ".kodiqa_worktrees", agent_id)
+        branch = f"kodiqa-{agent_id}"
+        try:
+            subprocess.run(["git", "worktree", "remove", worktree_dir, "--force"],
+                          capture_output=True, text=True, timeout=10, cwd=self.cwd)
+            subprocess.run(["git", "branch", "-D", branch],
+                          capture_output=True, text=True, timeout=5, cwd=self.cwd)
+        except Exception:
+            pass
+
     def _handle_agent(self, arg):
         """Spawn a sub-agent to handle a task."""
         if not arg:
             self.console.print("[dim]Usage: /agent <task description>[/]")
+            self.console.print("[dim]  /agent --worktree <task> — run in isolated git worktree[/]")
+            return
+        use_worktree = False
+        if arg.strip().startswith("--worktree"):
+            use_worktree = True
+            arg = arg.replace("--worktree", "", 1).strip()
+        if not arg:
+            self.console.print("[dim]Provide a task after --worktree[/]")
             return
         active = sum(1 for a in self._agents.values() if a.get("status") == "running")
         if active >= 3:
@@ -4531,22 +4776,33 @@ class Kodiqa:
             return
         self._agent_counter += 1
         agent_id = f"agent_{self._agent_counter}"
-        self._agents[agent_id] = {"task": arg, "status": "running", "result": None}
-        self.console.print(f"[green]●[/] Spawned {agent_id}: {arg[:60]}")
+        worktree_dir = None
+        if use_worktree:
+            worktree_dir = self._create_agent_worktree(agent_id)
+            if not worktree_dir:
+                self.console.print("[yellow]Falling back to shared workspace.[/]")
+        self._agents[agent_id] = {
+            "task": arg, "status": "running", "result": None,
+            "worktree": worktree_dir,
+        }
+        wt_label = f" [dim](worktree)[/]" if worktree_dir else ""
+        self.console.print(f"[green]●[/] Spawned {agent_id}: {arg[:60]}{wt_label}")
 
         def worker():
             try:
+                wt_ctx = f"\nWorking directory: {worktree_dir}" if worktree_dir else ""
+                task_prompt = f"Complete this task concisely:{wt_ctx}\n{arg}"
                 # Use compact non-streaming query
                 if is_claude_model(self.model) or self._is_live_claude(self.model):
                     result = self._claude_nostream(
-                        f"Complete this task concisely:\n{arg}",
+                        task_prompt,
                         [{"role": "user", "content": arg}]
                     )
                 else:
                     provider = self._get_provider_for_model(self.model)
                     if provider:
                         result = self._openai_compat_nostream(
-                            f"Complete this task concisely:\n{arg}",
+                            task_prompt,
                             [{"role": "user", "content": arg}],
                             provider,
                         )
@@ -4554,7 +4810,7 @@ class Kodiqa:
                         resp = requests.post(
                             f"{OLLAMA_URL}/api/chat",
                             json={"model": self.model, "messages": [
-                                {"role": "system", "content": "Complete this task concisely."},
+                                {"role": "system", "content": task_prompt},
                                 {"role": "user", "content": arg},
                             ], "stream": False},
                             timeout=120,
@@ -4565,6 +4821,18 @@ class Kodiqa:
             except Exception as e:
                 self._agents[agent_id]["result"] = f"Error: {e}"
                 self._agents[agent_id]["status"] = "error"
+            finally:
+                if worktree_dir:
+                    # Show diff from worktree
+                    try:
+                        diff = subprocess.run(
+                            ["git", "diff", "HEAD"],
+                            capture_output=True, text=True, timeout=10, cwd=worktree_dir,
+                        )
+                        if diff.stdout.strip():
+                            self._agents[agent_id]["worktree_diff"] = diff.stdout[:5000]
+                    except Exception:
+                        pass
 
         t = threading.Thread(target=worker, daemon=True)
         t.start()
@@ -4577,16 +4845,156 @@ class Kodiqa:
         for aid, info in self._agents.items():
             status = info["status"]
             color = {"running": "yellow", "done": "green", "error": "red"}.get(status, "dim")
-            self.console.print(f"  [{color}]●[/] {aid} [{color}]{status}[/] — {info['task'][:50]}")
+            wt = " [dim](worktree)[/]" if info.get("worktree") else ""
+            self.console.print(f"  [{color}]●[/] {aid} [{color}]{status}[/]{wt} — {info['task'][:50]}")
             if status in ("done", "error") and info.get("result"):
                 result = info["result"]
                 if len(result) > 500:
                     result = result[:500] + "..."
                 self.console.print(Panel(result, title=aid, border_style=color))
+            if info.get("worktree_diff"):
+                self.console.print(f"  [dim]Worktree has changes. Use 'git merge kodiqa-{aid}' to merge.[/]")
         # Offer to inject completed results
         done = [(aid, info) for aid, info in self._agents.items() if info["status"] == "done" and info.get("result")]
         if done:
             self.console.print(f"\n[dim]{len(done)} completed. Results shown above.[/]")
+
+    def _handle_team(self, arg):
+        """Spawn a team: coordinator breaks task into subtasks, workers execute in parallel."""
+        if not arg:
+            self.console.print("[dim]Usage: /team <task description>[/]")
+            self.console.print("[dim]  Coordinator splits task → workers execute → results merged[/]")
+            return
+        self._team_counter += 1
+        team_id = f"team_{self._team_counter}"
+        self._teams[team_id] = {
+            "task": arg, "status": "planning", "subtasks": [], "final_result": None,
+        }
+        self.console.print(f"[green]●[/] Team {team_id}: {arg[:60]}")
+        self.console.print(f"  [cyan]Coordinator planning...[/]")
+
+        def team_worker():
+            try:
+                # Phase 1: Coordinator breaks task into subtasks
+                plan_prompt = (
+                    f"Break this task into 2-4 independent subtasks that can be done in parallel. "
+                    f"Return ONLY a JSON array of subtask description strings, nothing else.\n\n"
+                    f"Task: {arg}"
+                )
+                if is_claude_model(self.model) or self._is_live_claude(self.model):
+                    plan_result = self._claude_nostream(plan_prompt, [{"role": "user", "content": plan_prompt}])
+                else:
+                    provider = self._get_provider_for_model(self.model)
+                    if provider:
+                        plan_result = self._openai_compat_nostream(plan_prompt, [{"role": "user", "content": plan_prompt}], provider)
+                    else:
+                        resp = requests.post(f"{OLLAMA_URL}/api/chat", json={
+                            "model": self.model, "messages": [{"role": "user", "content": plan_prompt}], "stream": False,
+                        }, timeout=120)
+                        plan_result = resp.json().get("message", {}).get("content", "[]")
+
+                # Parse JSON subtasks from response
+                import json as _json
+                subtasks = []
+                try:
+                    # Find JSON array in response
+                    match = re.search(r'\[.*\]', plan_result, re.DOTALL)
+                    if match:
+                        subtasks = _json.loads(match.group())
+                except Exception:
+                    subtasks = [arg]  # Fallback: single task
+
+                if not subtasks:
+                    subtasks = [arg]
+                subtasks = subtasks[:4]  # Cap at 4
+
+                self._teams[team_id]["status"] = "running"
+                self._teams[team_id]["subtasks"] = [
+                    {"task": st, "status": "pending", "result": None} for st in subtasks
+                ]
+                self.console.print(f"  [cyan]Team {team_id}: {len(subtasks)} subtasks planned[/]")
+                for i, st in enumerate(subtasks):
+                    self.console.print(f"    {i+1}. {st[:60]}")
+
+                # Phase 2: Execute subtasks in parallel via threads
+                import concurrent.futures
+                def run_subtask(idx, task_desc):
+                    self._teams[team_id]["subtasks"][idx]["status"] = "running"
+                    try:
+                        if is_claude_model(self.model) or self._is_live_claude(self.model):
+                            r = self._claude_nostream(task_desc, [{"role": "user", "content": task_desc}])
+                        else:
+                            provider = self._get_provider_for_model(self.model)
+                            if provider:
+                                r = self._openai_compat_nostream(task_desc, [{"role": "user", "content": task_desc}], provider)
+                            else:
+                                resp = requests.post(f"{OLLAMA_URL}/api/chat", json={
+                                    "model": self.model, "messages": [{"role": "user", "content": task_desc}], "stream": False,
+                                }, timeout=120)
+                                r = resp.json().get("message", {}).get("content", "No result")
+                        self._teams[team_id]["subtasks"][idx]["result"] = r
+                        self._teams[team_id]["subtasks"][idx]["status"] = "done"
+                        return r
+                    except Exception as e:
+                        self._teams[team_id]["subtasks"][idx]["result"] = f"Error: {e}"
+                        self._teams[team_id]["subtasks"][idx]["status"] = "error"
+                        return f"Error: {e}"
+
+                with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(subtasks), 3)) as executor:
+                    futures = {executor.submit(run_subtask, i, st): i for i, st in enumerate(subtasks)}
+                    concurrent.futures.wait(futures)
+
+                # Phase 3: Merge results
+                self._teams[team_id]["status"] = "merging"
+                results_text = "\n\n".join(
+                    f"Subtask {i+1}: {st['task'][:80]}\nResult: {(st['result'] or 'No result')[:2000]}"
+                    for i, st in enumerate(self._teams[team_id]["subtasks"])
+                )
+                merge_prompt = (
+                    f"Merge these subtask results into a single coherent response.\n\n"
+                    f"Original task: {arg}\n\n{results_text}"
+                )
+                if is_claude_model(self.model) or self._is_live_claude(self.model):
+                    final = self._claude_nostream(merge_prompt, [{"role": "user", "content": merge_prompt}])
+                else:
+                    provider = self._get_provider_for_model(self.model)
+                    if provider:
+                        final = self._openai_compat_nostream(merge_prompt, [{"role": "user", "content": merge_prompt}], provider)
+                    else:
+                        resp = requests.post(f"{OLLAMA_URL}/api/chat", json={
+                            "model": self.model, "messages": [{"role": "user", "content": merge_prompt}], "stream": False,
+                        }, timeout=120)
+                        final = resp.json().get("message", {}).get("content", "No result")
+
+                self._teams[team_id]["final_result"] = final
+                self._teams[team_id]["status"] = "done"
+                self.console.print(f"\n  [green]●[/] Team {team_id} complete!")
+
+            except Exception as e:
+                self._teams[team_id]["status"] = "error"
+                self._teams[team_id]["final_result"] = f"Error: {e}"
+                self.console.print(f"\n  [red]●[/] Team {team_id} error: {e}")
+
+        t = threading.Thread(target=team_worker, daemon=True)
+        t.start()
+
+    def _handle_teams(self):
+        """List all teams and their subtask status."""
+        if not self._teams:
+            self.console.print("[dim]No teams. Use /team <task> to spawn one.[/]")
+            return
+        for tid, info in self._teams.items():
+            status = info["status"]
+            color = {"planning": "cyan", "running": "yellow", "merging": "cyan", "done": "green", "error": "red"}.get(status, "dim")
+            self.console.print(f"  [{color}]●[/] {tid} [{color}]{status}[/] — {info['task'][:50]}")
+            for i, st in enumerate(info.get("subtasks", [])):
+                sc = {"pending": "dim", "running": "yellow", "done": "green", "error": "red"}.get(st["status"], "dim")
+                self.console.print(f"    [{sc}]●[/] Subtask {i+1}: {st['task'][:50]} [{sc}]{st['status']}[/]")
+            if info.get("final_result"):
+                result = info["final_result"]
+                if len(result) > 500:
+                    result = result[:500] + "..."
+                self.console.print(Panel(result, title=f"{tid} result", border_style=color))
 
     def _handle_lsp(self, arg):
         """Handle /lsp command for Language Server Protocol."""
@@ -4871,9 +5279,50 @@ class Kodiqa:
                 if changed:
                     rel_paths = [os.path.relpath(p, self.cwd) for p in changed]
                     self.console.print(f"\n  [cyan]\u27f3 Files changed:[/] {', '.join(rel_paths)}")
+                    # Scan for #AI: triggers in changed files
+                    for fp in changed:
+                        triggers = self._scan_ai_triggers(fp)
+                        for line_num, instruction in triggers:
+                            rel = os.path.relpath(fp, self.cwd)
+                            self.console.print(f"\n  [magenta]\u26a1 AI trigger found:[/] {rel}:{line_num} — {instruction}")
+                            self._ai_trigger_queue.append({
+                                "file": fp, "line": line_num, "instruction": instruction,
+                            })
         t = threading.Thread(target=poll_changes, daemon=True)
         t.start()
         self.console.print(f"[green]Watching:[/] {path} [dim](use /watch stop to end)[/]")
+
+    def _scan_ai_triggers(self, filepath):
+        """Scan file for #AI: or //AI: comments. Returns [(line_num, instruction)]."""
+        import re
+        triggers = []
+        try:
+            with open(filepath, 'r', errors='replace') as f:
+                for i, line in enumerate(f, 1):
+                    m = re.search(r'(?:#|//|/\*)\s*AI:\s*(.+?)(?:\*/)?$', line)
+                    if m:
+                        triggers.append((i, m.group(1).strip()))
+        except Exception:
+            pass
+        return triggers
+
+    def _remove_ai_trigger(self, filepath, line_num):
+        """Remove the AI trigger comment from the specified line."""
+        import re
+        try:
+            with open(filepath, 'r', errors='replace') as f:
+                lines = f.readlines()
+            if 1 <= line_num <= len(lines):
+                line = lines[line_num - 1]
+                cleaned = re.sub(r'\s*(?:#|//|/\*)\s*AI:\s*.+?(?:\*/)?\s*$', '', line)
+                if cleaned.strip():
+                    lines[line_num - 1] = cleaned.rstrip() + '\n'
+                else:
+                    lines.pop(line_num - 1)
+                with open(filepath, 'w') as f:
+                    f.writelines(lines)
+        except Exception:
+            pass
 
     def _handle_embed(self, arg):
         try:
@@ -4945,6 +5394,45 @@ class Kodiqa:
         context = "\n\n".join(context_parts)
         self._chat(f"Based on these relevant code sections:\n\n{context}\n\nAnswer this question: {query}")
 
+    def _handle_test_fix(self, arg):
+        """Run tests, if failures send to AI for fix, re-run. Max 3 iterations."""
+        if not arg:
+            self.console.print("[dim]Usage: /test-fix <test_command>[/]")
+            self.console.print("[dim]  Example: /test-fix pytest -v tests/[/]")
+            return
+        cmd = arg.strip()
+        max_iter = 3
+        for i in range(max_iter):
+            self.console.print(f"[cyan]Test-fix iteration {i + 1}/{max_iter}...[/]")
+            try:
+                result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=120, cwd=self.cwd)
+                output = (result.stdout + result.stderr).strip()
+            except subprocess.TimeoutExpired:
+                self.console.print("[red]Tests timed out (120s).[/]")
+                return
+            except Exception as e:
+                self.console.print(f"[red]Error running tests: {e}[/]")
+                return
+            if result.returncode == 0:
+                self.console.print(f"[green]All tests passing![/]")
+                if output:
+                    lines = output.split("\n")
+                    summary = "\n".join(lines[-10:]) if len(lines) > 10 else output
+                    self.console.print(Panel(summary[:1000], title="Test Output", border_style="green"))
+                return
+            self.console.print(f"[red]Tests failed (exit {result.returncode}).[/]")
+            if i == max_iter - 1:
+                self.console.print("[yellow]Max iterations reached. Tests still failing.[/]")
+                if output:
+                    self.console.print(Panel(output[:1000], title="Last Output", border_style="yellow"))
+                return
+            self._chat(
+                f"Tests are failing. Fix the code to make them pass.\n\n"
+                f"Command: {cmd}\nExit code: {result.returncode}\n\n"
+                f"Test output:\n```\n{output[:5000]}\n```\n\n"
+                f"Read the relevant source files, identify the failures, and fix them."
+            )
+
     def _handle_debug(self, arg):
         parts = arg.split()
         script = parts[0]
@@ -4981,6 +5469,26 @@ class Kodiqa:
             f"2. Analyze the error and identify the root cause\n"
             f"3. Suggest and implement a fix"
         )
+
+    # ── Repo Map ──
+
+    def _handle_map(self, arg):
+        """Build and display repository map with symbol extraction."""
+        from rich.status import Status
+        try:
+            from repomap import RepoMap
+        except ImportError:
+            self.console.print("[red]repomap module not found.[/]")
+            return
+        path = os.path.abspath(os.path.expanduser(arg.strip())) if arg else self.cwd
+        with Status("Building repo map...", console=self.console, spinner="dots"):
+            rmap = RepoMap(path, SKIP_DIRS, SKIP_EXTENSIONS)
+            rmap.build_map()
+        output = rmap.format_map()
+        if not rmap._has_treesitter:
+            self.console.print("[dim]Using regex extraction. Install tree-sitter for better results:[/]")
+            self.console.print("[dim]  pip install tree-sitter tree-sitter-languages[/]")
+        self.console.print(Panel(output[:5000], title="Repo Map", border_style="cyan"))
 
     # ── Diagram Detection ──
 
@@ -5171,8 +5679,20 @@ def _short_path(path):
 
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="Kodiqa — AI coding agent")
+    parser.add_argument("--headless", type=str, metavar="TASK", help="Run non-interactively with given task")
+    parser.add_argument("--model", type=str, metavar="MODEL", help="Model to use")
+    parser.add_argument("--output", type=str, metavar="FILE", help="Output file for headless mode")
+    args = parser.parse_args()
+
     kodiqa = Kodiqa()
-    kodiqa.run()
+    if args.model:
+        kodiqa.model = kodiqa._resolve_model_name(args.model)
+    if args.headless:
+        kodiqa.run_headless(args.headless, args.output)
+    else:
+        kodiqa.run()
 
 
 if __name__ == "__main__":

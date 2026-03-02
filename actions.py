@@ -23,6 +23,58 @@ _logger = logging.getLogger("kodiqa")
 # Per-file undo stack: {filepath: deque([(old_content), ...], maxlen=N)}
 _undo_buffer = defaultdict(lambda: deque(maxlen=10))
 
+# ── Hooks ──
+_hooks = {}
+
+def set_hooks(hooks_dict):
+    """Set tool hooks from config."""
+    global _hooks
+    _hooks = hooks_dict if isinstance(hooks_dict, dict) else {}
+
+def _run_hook(hook_cmd, params):
+    """Run a hook command with {param} substitution. Returns True if success."""
+    try:
+        cmd = hook_cmd
+        for k, v in params.items():
+            cmd = cmd.replace(f"{{{k}}}", str(v))
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
+        return result.returncode == 0
+    except Exception:
+        return True  # Don't block on hook failure
+
+# ── Sandbox ──
+_sandbox_enabled = False
+
+def set_sandbox(enabled):
+    """Enable/disable OS-level sandboxing for run_command."""
+    global _sandbox_enabled
+    _sandbox_enabled = enabled
+
+def _sandbox_wrap(cmd, cwd):
+    """Wrap command in OS-level sandbox restricting writes to cwd + /tmp."""
+    import platform
+    import shutil
+    system = platform.system()
+    if system == "Darwin":
+        # macOS sandbox-exec
+        profile = (
+            "(version 1)(allow default)"
+            f"(deny file-write* (require-not (subpath \"{cwd}\"))"
+            f" (require-not (subpath \"/tmp\"))"
+            f" (require-not (subpath \"/private/tmp\")))"
+        )
+        return f"sandbox-exec -p '{profile}' /bin/sh -c {_shell_quote(cmd)}"
+    elif system == "Linux":
+        if shutil.which("firejail"):
+            return f"firejail --noprofile --whitelist={cwd} --whitelist=/tmp -- {cmd}"
+        elif shutil.which("bwrap"):
+            return f"bwrap --ro-bind / / --bind {cwd} {cwd} --bind /tmp /tmp --dev /dev --proc /proc -- {cmd}"
+    return cmd  # No sandbox tool, run as-is
+
+def _shell_quote(s):
+    """Quote a string for shell usage."""
+    return "'" + s.replace("'", "'\\''") + "'"
+
 # Edit queue for batch review mode
 _edit_queue = []  # list of {"path": ..., "old": ..., "new": ..., "type": "write"|"edit"|...}
 _batch_mode = False
@@ -297,7 +349,17 @@ def _dispatch(name, p, memory):
     }
     handler = handlers.get(name)
     if handler:
-        return handler()
+        # Pre-hook
+        pre_hook = _hooks.get(f"pre_{name}")
+        if pre_hook:
+            if not _run_hook(pre_hook, p):
+                return f"Pre-hook failed for {name}"
+        result = handler()
+        # Post-hook
+        post_hook = _hooks.get(f"post_{name}")
+        if post_hook:
+            _run_hook(post_hook, p)
+        return result
     return f"Unknown tool: {name}"
 
 
@@ -583,9 +645,12 @@ def do_run_command(command):
     for blocked in BLOCKED_COMMANDS:
         if blocked in command:
             return f"Blocked dangerous command: {command}"
+    run_cmd = command
+    if _sandbox_enabled:
+        run_cmd = _sandbox_wrap(command, os.getcwd())
     try:
         result = subprocess.run(
-            command, shell=True, capture_output=True, text=True,
+            run_cmd, shell=True, capture_output=True, text=True,
             timeout=COMMAND_TIMEOUT, cwd=os.getcwd(),
         )
         output = ""

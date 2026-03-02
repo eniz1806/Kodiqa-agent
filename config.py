@@ -271,6 +271,18 @@ PERSONAS = {
 
 # ── Changelog ──
 CHANGELOG = [
+    {"version": "v3.2.0", "date": "2026-03-02", "changes": [
+        "Auto lint-fix loop (/lint auto) — AI fixes lint errors automatically (max 3 iterations)",
+        "Auto test-fix loop (/test-fix) — run tests, AI fixes failures, re-run",
+        "Hooks system — pre/post hooks for tool execution via config.json",
+        "Watch AI triggers — # AI: comments in watched files trigger AI actions",
+        "Architect mode (/architect) — strong model plans, cheap model implements",
+        "Background/headless mode (--headless) — run tasks non-interactively",
+        "Worktree isolation (/agent --worktree) — git worktree per sub-agent",
+        "OS-level sandboxing (/sandbox) — sandbox-exec (macOS), firejail/bwrap (Linux)",
+        "Repo map (/map) — tree-sitter or regex symbol extraction across codebase",
+        "Agent teams (/team) — coordinator splits tasks, workers execute in parallel",
+    ]},
     {"version": "v3.0.0", "date": "2026-03-02", "changes": [
         "Added /changelog — view version history",
         "Added /stats — session metrics (files, tools, time, cost)",
@@ -324,6 +336,7 @@ DEFAULTS = {
     "blocked_commands": BLOCKED_COMMANDS,
     "skip_dirs": list(SKIP_DIRS),
     "skip_extensions": list(SKIP_EXTENSIONS),
+    "hooks": {},
 }
 
 
