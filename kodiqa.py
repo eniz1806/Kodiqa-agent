@@ -21,6 +21,8 @@ from rich.prompt import Prompt
 from rich.status import Status
 
 import logging
+import select
+import signal
 import subprocess
 import time
 
@@ -413,8 +415,8 @@ class Kodiqa:
         self._history_file = os.path.join(KODIQA_DIR, "input_history")
         self._pt_style = PTStyle.from_dict({
             'prompt': '#af5fff bold',
-            'bottom-toolbar': 'bg:#282828 #999999',
-            'bottom-toolbar.text': '#999999',
+            'bottom-toolbar': 'bg:default #999999 noreverse',
+            'bottom-toolbar.text': 'bg:default #999999 noreverse',
             'separator': '#666666',
         })
         self._pt_session = PromptSession(
@@ -600,6 +602,7 @@ class Kodiqa:
                     user_input = self._pt_session.prompt(
                         [('class:separator', '─' * w + '\n'), ('class:prompt', '❯ ')],
                         reserve_space_for_menu=0,
+                        bottom_toolbar='\n\n',
                     )
                 except (EOFError, KeyboardInterrupt):
                     self._quit()
@@ -2491,6 +2494,11 @@ class Kodiqa:
             assistant_text = self._stream_ollama(messages)
             if assistant_text is None:
                 return
+            if self._stream_interrupted:
+                if assistant_text:
+                    self.history.append({"role": "assistant", "content": assistant_text})
+                self._save_session()
+                return
             self.history.append({"role": "assistant", "content": assistant_text})
 
             actions = parse_actions(assistant_text)
@@ -2551,6 +2559,12 @@ class Kodiqa:
 
             response = self._call_claude_stream(system_prompt, messages)
             if response is None:
+                return
+            if self._stream_interrupted:
+                text_content = response.get("text", "")
+                if text_content:
+                    self.history.append({"role": "assistant", "content": [{"type": "text", "text": text_content}]})
+                self._save_session()
                 return
 
             text_content = response.get("text", "")
@@ -2741,9 +2755,13 @@ class Kodiqa:
         writer = StreamWriter(self.console, compact=self.compact_mode)
         thinking_status = Status("  [dim]Thinking...[/]", console=self.console, spinner="dots")
         thinking_status.start()
+        cleanup = self._start_stream_interrupt()
 
         try:
             for line in resp.iter_lines():
+                if self._stream_interrupted:
+                    resp.close()
+                    break
                 if not line:
                     continue
                 line_str = line.decode("utf-8", errors="replace")
@@ -2811,10 +2829,14 @@ class Kodiqa:
                     self.console.print(f"\n[red]Claude error: {err.get('message', 'Unknown')}[/]")
 
         except KeyboardInterrupt:
+            self._stream_interrupted = True
+        finally:
+            cleanup()
+
+        if self._stream_interrupted:
             thinking_status.stop()
             writer.flush_pending()
             self.console.print("\n[dim](interrupted)[/]")
-
         if first_token:
             thinking_status.stop()
         writer.flush_pending()
@@ -2959,6 +2981,12 @@ class Kodiqa:
 
             response = self._call_openai_compat_stream(messages, provider)
             if response is None:
+                return
+            if self._stream_interrupted:
+                text_content = response.get("text", "")
+                if text_content:
+                    self.history.append({"role": "assistant", "content": text_content})
+                self._save_session()
                 return
 
             text_content = response.get("text", "")
@@ -3123,9 +3151,13 @@ class Kodiqa:
         writer = StreamWriter(self.console, compact=self.compact_mode)
         thinking_status = Status("  [dim]Thinking...[/]", console=self.console, spinner="dots")
         thinking_status.start()
+        cleanup = self._start_stream_interrupt()
 
         try:
             for line in resp.iter_lines():
+                if self._stream_interrupted:
+                    resp.close()
+                    break
                 if not line:
                     continue
                 line_str = line.decode("utf-8", errors="replace")
@@ -3179,10 +3211,14 @@ class Kodiqa:
                         tool_calls[idx]["arguments"].append(func["arguments"])
 
         except KeyboardInterrupt:
+            self._stream_interrupted = True
+        finally:
+            cleanup()
+
+        if self._stream_interrupted:
             thinking_status.stop()
             writer.flush_pending()
             self.console.print("\n[dim](interrupted)[/]")
-
         if first_token:
             thinking_status.stop()
         writer.flush_pending()
@@ -3263,6 +3299,56 @@ class Kodiqa:
         except Exception:
             return ""
 
+    # ── Stream interrupt (Esc or Ctrl+C) ──
+
+    def _start_stream_interrupt(self):
+        """Start monitoring for Esc key to interrupt streaming. Returns cleanup fn."""
+        self._stream_interrupted = False
+        old_handler = signal.getsignal(signal.SIGINT)
+
+        def _sigint_handler(signum, frame):
+            self._stream_interrupted = True
+
+        signal.signal(signal.SIGINT, _sigint_handler)
+
+        stop_event = threading.Event()
+
+        def _esc_monitor():
+            import tty, termios
+            fd = sys.stdin.fileno()
+            try:
+                old_settings = termios.tcgetattr(fd)
+            except termios.error:
+                return
+            try:
+                tty.setcbreak(fd)
+                while not stop_event.is_set() and not self._stream_interrupted:
+                    if select.select([fd], [], [], 0.1)[0]:
+                        ch = os.read(fd, 1)
+                        if ch == b'\x1b':  # Esc
+                            self._stream_interrupted = True
+                            break
+                        elif ch == b'\x03':  # Ctrl+C
+                            self._stream_interrupted = True
+                            break
+            except Exception:
+                pass
+            finally:
+                try:
+                    termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+                except Exception:
+                    pass
+
+        t = threading.Thread(target=_esc_monitor, daemon=True)
+        t.start()
+
+        def cleanup():
+            stop_event.set()
+            t.join(timeout=0.5)
+            signal.signal(signal.SIGINT, old_handler)
+
+        return cleanup
+
     # ── Ollama streaming ──
 
     def _stream_ollama(self, messages):
@@ -3296,8 +3382,12 @@ class Kodiqa:
         writer = StreamWriter(self.console, compact=self.compact_mode)
         thinking_status = Status("  [dim]Thinking...[/]", console=self.console, spinner="dots")
         thinking_status.start()
+        cleanup = self._start_stream_interrupt()
         try:
             for line in resp.iter_lines():
+                if self._stream_interrupted:
+                    resp.close()
+                    break
                 if not line:
                     continue
                 try:
@@ -3316,9 +3406,13 @@ class Kodiqa:
                     token_count += 1
                     writer.write(token)
         except KeyboardInterrupt:
+            self._stream_interrupted = True
+        finally:
+            cleanup()
+        if self._stream_interrupted:
             thinking_status.stop()
             writer.flush_pending()
-            self.console.print("\n[dim](interrupted)[/]")
+            self.console.print("\n[dim](interrupted — press Esc or Ctrl+C to stop)[/]")
         if first_token:
             thinking_status.stop()
         writer.flush_pending()
