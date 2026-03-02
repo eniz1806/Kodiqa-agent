@@ -6,7 +6,7 @@ An open-source AI coding agent that runs anywhere — free locally with Ollama, 
 ## Architecture
 
 ```
-kodiqa.py    (~4158 lines)  Main agent: Kodiqa class, StreamWriter, KodiqaCompleter, prompt_toolkit UI, chat loops, slash commands, modes, MCP, branching, auto-discovery, workspace boundary, auto-commit, budget, lint, plugins, sub-agents, LSP, voice, themes
+kodiqa.py    (~4252 lines)  Main agent: Kodiqa class, StreamWriter, KodiqaCompleter, prompt_toolkit UI, chat loops, slash commands, modes, MCP, branching, auto-discovery, workspace boundary, auto-commit, budget, lint, plugins, sub-agents, LSP, voice, themes
 actions.py   (~950 lines)   26 action handlers: file ops, git, search, web, memory, clipboard, multi_edit, edit queue + diff preview
 tools.py     (~461 lines)   Tool schemas (Claude native format, converted to OpenAI format for OpenAI-compat providers)
 config.py    (~489 lines)   Constants, provider registry, model aliases, themes, system prompt, config, .kodiqaignore
@@ -377,7 +377,8 @@ Add the handler in `_handle_slash()` method in `kodiqa.py`. Update `/help` text.
 - API colors: Claude=yellow, OpenAI=white, DeepSeek=cyan, Groq=red, Mistral=magenta, Qwen=blue, Ollama=green, Consensus=magenta
 - Per-file undo buffer: `deque(maxlen=10)` storing content before each edit/write
 - Shell env detection at startup (OS, shell, Python, git, node, cargo, go, java, docker)
-- prompt_toolkit for `❯` prompt with separator line, tab completion, file history
+- prompt_toolkit for `❯` prompt with separator line, tab completion, file history, bottom padding
 - Arrow-key selector for all interactive prompts (tty/termios raw input, save/restore cursor)
+- Stream interrupt: Esc or Ctrl+C stops any streaming response instantly (all 3 providers)
 - pip-installable via `pyproject.toml` with `kodiqa` console script entry point
 - Workspace boundary protection: asks before accessing files outside cwd

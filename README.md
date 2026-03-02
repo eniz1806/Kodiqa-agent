@@ -78,6 +78,7 @@ kodiqa
 - **Interactive pickers** — `/model` and `/key` show numbered menus, navigate with arrows
 - **Tab autocomplete** — slash commands, model names, file paths (prompt_toolkit)
 - **Compact streaming** — hides code output, shows progress instead (toggle with `/verbose`)
+- **Stream interrupt** — press Esc or Ctrl+C to stop any response instantly
 - **Thinking display** — shows spinner for `<think>` reasoning blocks, line count summary
 - **Multi-model consensus** — query all models, merge best answers
 - **3 permission modes** — default (confirm all), relaxed (auto file ops), auto (no confirms)
@@ -408,7 +409,7 @@ find any bugs in this code
 
 ```
 ~/LLMS/kodiqa/
-  kodiqa.py          # Main agent (~4158 lines)
+  kodiqa.py          # Main agent (~4252 lines)
   actions.py         # 26 action handlers (~950 lines)
   tools.py           # Tool schemas (~461 lines)
   config.py          # Config, themes, provider registry (~489 lines)
