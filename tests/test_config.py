@@ -61,7 +61,7 @@ class TestGetOpenaiProvider:
 
     def test_local_models_return_none(self):
         assert get_openai_provider("qwen3:14b") is None
-        assert get_openai_provider("qwen3-coder") is None
+        assert get_openai_provider("qwen3-coder:latest") is None
 
     def test_claude_returns_none(self):
         assert get_openai_provider("claude-sonnet-4-20250514") is None
