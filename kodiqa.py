@@ -496,6 +496,13 @@ class Kodiqa:
             style=self._pt_style,
         )
         self.qwen_key = self.api_keys.get("qwen", "")  # backward compat alias
+        # Restore Qwen region endpoint if saved
+        qwen_region = self.settings.get("qwen_region")
+        if qwen_region:
+            from config import QWEN_URLS
+            if qwen_region in QWEN_URLS:
+                OPENAI_COMPAT_PROVIDERS["qwen"]["url"] = QWEN_URLS[qwen_region]
+                OPENAI_COMPAT_PROVIDERS["qwen"]["models_url"] = QWEN_URLS[qwen_region].replace("/chat/completions", "/models")
         # Load Google API keys if saved
         g_key = self.settings.get("google_api_key", "")
         g_cx = self.settings.get("google_cx", "")
@@ -2098,6 +2105,7 @@ class Kodiqa:
                 self.settings[prov["key_setting"]] = key
                 if provider == "qwen":
                     self.qwen_key = key
+                    self._configure_qwen_endpoint(key)
                 save_settings(self.settings)
                 self.console.print(f"[green]{prov['label']} API key saved![/]")
                 # Auto-switch to this provider's default model if currently on local
@@ -2109,6 +2117,38 @@ class Kodiqa:
                 self.console.print(f"[yellow]Key should start with {prov['key_prefix']}. Not saved.[/]")
         except (EOFError, KeyboardInterrupt):
             self.console.print("\n[dim]Cancelled.[/]")
+
+    def _configure_qwen_endpoint(self, key):
+        """Auto-detect Qwen endpoint from key type, ask region if needed."""
+        from config import QWEN_URLS
+        is_coding = key.startswith("sk-sp-")
+        if is_coding:
+            self.console.print("[blue]Detected Coding Plan key (sk-sp-).[/]")
+        # Ask region
+        self.console.print("\n[bold blue]Qwen region:[/]")
+        if is_coding:
+            options = [
+                ("1", "International (Singapore)", "coding-intl"),
+                ("2", "China (Beijing)", "coding-china"),
+            ]
+        else:
+            options = [
+                ("1", "International (Singapore)", "intl"),
+                ("2", "China (Beijing)", "china"),
+            ]
+        for num, label, _ in options:
+            self.console.print(f"  {num}. {label}")
+        try:
+            choice = Prompt.ask("[bold]Region[/]", choices=["1", "2"], default="1")
+        except (EOFError, KeyboardInterrupt):
+            choice = "1"
+        region_key = options[int(choice) - 1][2]
+        url = QWEN_URLS[region_key]
+        OPENAI_COMPAT_PROVIDERS["qwen"]["url"] = url
+        models_url = url.replace("/chat/completions", "/models")
+        OPENAI_COMPAT_PROVIDERS["qwen"]["models_url"] = models_url
+        self.settings["qwen_region"] = region_key
+        self.console.print(f"[dim]Endpoint: {url}[/]")
 
     def _fetch_api_models(self):
         """Fetch live model lists from Claude and all OpenAI-compat APIs. Caches results."""

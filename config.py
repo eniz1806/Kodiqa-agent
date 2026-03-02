@@ -63,6 +63,12 @@ QWEN_ALIASES = {
 }
 
 QWEN_API_URL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions"
+QWEN_URLS = {
+    "intl": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions",
+    "china": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+    "coding-intl": "https://coding-intl.dashscope.aliyuncs.com/v1/chat/completions",
+    "coding-china": "https://coding.dashscope.aliyuncs.com/v1/chat/completions",
+}
 
 # All OpenAI-compatible API providers (shared streaming/tool-calling implementation)
 OPENAI_COMPAT_PROVIDERS = {
