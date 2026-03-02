@@ -744,7 +744,6 @@ def do_ask_user(question, options=None, header=None, multi_select=False):
         return "Could not ask user (no console available)."
 
     from rich.panel import Panel
-    from rich.prompt import Prompt
 
     # Build the question panel
     content_lines = []
@@ -775,44 +774,52 @@ def do_ask_user(question, options=None, header=None, multi_select=False):
         padding=(1, 2),
     ))
 
-    if options and len(options) > 0:
-        choice = Prompt.ask("[bold yellow]Your choice[/]")
+    # Use raw input() — Rich Prompt.ask can fail when terminal state is altered
+    # by stream interrupt monitor or stall indicator threads
+    try:
+        if options and len(options) > 0:
+            _console.print("[bold yellow]Your choice: [/]", end="")
+            choice = input().strip()
 
-        if multi_select:
-            # Parse multiple selections: "1,3" or "1 2 3" or "1, 3"
-            parts = [p.strip() for p in choice.replace(",", " ").split() if p.strip()]
-            selected = []
-            custom = []
-            for part in parts:
+            if multi_select:
+                # Parse multiple selections: "1,3" or "1 2 3" or "1, 3"
+                parts = [p.strip() for p in choice.replace(",", " ").split() if p.strip()]
+                selected = []
+                custom = []
+                for part in parts:
+                    try:
+                        idx = int(part)
+                        if 1 <= idx <= len(options):
+                            label = options[idx - 1].get("label", str(options[idx - 1]))
+                            selected.append(label)
+                    except ValueError:
+                        custom.append(part)
+                if selected:
+                    for s in selected:
+                        _console.print(f"  [green]+ {s}[/]")
+                    result = "User selected: " + ", ".join(selected)
+                    if custom:
+                        result += f" (and typed: {' '.join(custom)})"
+                    return result
+                return f"User answered: {choice}"
+            else:
+                # Single select
                 try:
-                    idx = int(part)
+                    idx = int(choice)
                     if 1 <= idx <= len(options):
                         label = options[idx - 1].get("label", str(options[idx - 1]))
-                        selected.append(label)
+                        _console.print(f"  [green]Selected: {label}[/]")
+                        return f"User selected: {label}"
                 except ValueError:
-                    custom.append(part)
-            if selected:
-                for s in selected:
-                    _console.print(f"  [green]+ {s}[/]")
-                result = "User selected: " + ", ".join(selected)
-                if custom:
-                    result += f" (and typed: {' '.join(custom)})"
-                return result
-            return f"User answered: {choice}"
+                    pass
+                return f"User answered: {choice}"
         else:
-            # Single select
-            try:
-                idx = int(choice.strip())
-                if 1 <= idx <= len(options):
-                    label = options[idx - 1].get("label", str(options[idx - 1]))
-                    _console.print(f"  [green]Selected: {label}[/]")
-                    return f"User selected: {label}"
-            except ValueError:
-                pass
-            return f"User answered: {choice}"
-    else:
-        answer = Prompt.ask("[bold yellow]Your answer[/]")
-        return f"User answered: {answer}"
+            _console.print("[bold yellow]Your answer: [/]", end="")
+            answer = input().strip()
+            return f"User answered: {answer}"
+    except (EOFError, KeyboardInterrupt):
+        _console.print("\n[dim]Cancelled.[/]")
+        return "User cancelled the question."
 
 
 # ── File Management Tools ──
