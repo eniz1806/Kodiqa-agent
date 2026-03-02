@@ -6,17 +6,17 @@ An open-source AI coding agent that runs anywhere — free locally with Ollama, 
 ## Architecture
 
 ```
-kodiqa.py    (~5500 lines)  Main agent: Kodiqa class, StreamWriter, StreamStallIndicator, KodiqaCompleter, prompt_toolkit UI, chat loops, slash commands, modes, MCP, branching, auto-discovery, workspace boundary, auto-commit, budget, lint, plugins, sub-agents, LSP, voice, themes, architect mode, headless mode, agent teams, repo map
-actions.py   (~1000 lines)  26 action handlers: file ops, git, search, web, memory, clipboard, multi_edit, edit queue + diff preview, hooks, sandbox
-tools.py     (~461 lines)   Tool schemas (Claude native format, converted to OpenAI format for OpenAI-compat providers)
-config.py    (~575 lines)   Constants, provider registry, model aliases, themes, personas, changelog, Qwen Coding Plan models, system prompt, config, .kodiqaignore
-web.py       (~194 lines)   3 search engines (DuckDuckGo, Google scrape, Google API) + page fetcher
+kodiqa.py    (5699 lines)   Main agent: Kodiqa class, StreamWriter, StreamStallIndicator, KodiqaCompleter, prompt_toolkit UI, chat loops, slash commands, modes, MCP, branching, auto-discovery, workspace boundary, auto-commit, budget, lint, plugins, sub-agents, LSP, voice, themes, architect mode, headless mode, agent teams, repo map
+actions.py   (1022 lines)   26 action handlers: file ops, git, search, web, memory, clipboard, multi_edit, edit queue + diff preview, hooks, sandbox
+tools.py     (461 lines)    Tool schemas (Claude native format, converted to OpenAI format for OpenAI-compat providers)
+config.py    (584 lines)    Constants, provider registry, model aliases, themes, personas, changelog, Qwen Coding Plan models, system prompt, config, .kodiqaignore
+web.py       (194 lines)    3 search engines (DuckDuckGo, Google scrape, Google API) + page fetcher
 memory.py    (82 lines)     SQLite-backed persistent memory store
-mcp.py       (~176 lines)   MCP client: MCPServer (stdio JSON-RPC transport) + MCPManager (multi-server)
+mcp.py       (176 lines)    MCP client: MCPServer (stdio JSON-RPC transport) + MCPManager (multi-server)
 templates.py (61 lines)     5 project templates for /init command
-lsp.py       (~220 lines)   LSP client for Language Server Protocol integration
-embeddings.py (~93 lines)   SQLite-backed vector store for RAG search
-repomap.py   (~150 lines)  Tree-sitter/regex repo map and symbol extraction
+lsp.py       (220 lines)    LSP client for Language Server Protocol integration
+embeddings.py (93 lines)    SQLite-backed vector store for RAG search
+repomap.py   (157 lines)    Tree-sitter/regex repo map and symbol extraction
 ```
 
 ## Test Suite
