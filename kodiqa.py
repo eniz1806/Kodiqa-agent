@@ -3399,6 +3399,23 @@ class Kodiqa:
                 messages.append({"role": "user", "content": content})
         return messages
 
+    def _build_openai_request_body(self, messages, provider):
+        """Build request body for OpenAI-compatible API, with provider-specific params."""
+        body = {
+            "model": self.model,
+            "messages": messages,
+            "tools": self._get_openai_tools(),
+            "max_tokens": 8192,
+            "stream": True,
+        }
+        # stream_options not supported by all providers
+        if provider not in ("groq",):
+            body["stream_options"] = {"include_usage": True}
+        # parallel_tool_calls only for providers that support it
+        if provider in ("openai",):
+            body["parallel_tool_calls"] = True
+        return body
+
     def _call_openai_compat_stream(self, messages, provider):
         """Stream OpenAI-compatible API with tool calling, retry, and token tracking."""
         prov = OPENAI_COMPAT_PROVIDERS[provider]
@@ -3415,25 +3432,28 @@ class Kodiqa:
                         "Authorization": f"Bearer {key}",
                         "Content-Type": "application/json",
                     },
-                    json={
-                        "model": self.model,
-                        "messages": messages,
-                        "tools": self._get_openai_tools(),
-                        "max_tokens": 8192,
-                        "stream": True,
-                        "stream_options": {"include_usage": True},
-                        "parallel_tool_calls": True,
-                    },
+                    json=self._build_openai_request_body(messages, provider),
                     stream=True,
                     timeout=300,
                 ),
                 provider_name=prov["label"],
             )
             if resp.status_code == 401:
-                self.console.print(f"[red]Invalid {prov['label']} API key. Use /key {provider} to update it.[/]")
+                detail = ""
+                try:
+                    detail = resp.json().get("error", {}).get("message", resp.text[:200])
+                except Exception:
+                    detail = resp.text[:200]
+                self.console.print(f"[red]{prov['label']} API key rejected (401): {detail}[/]")
+                self.console.print(f"[dim]Use /key {provider} to update it.[/]")
                 return None
             if resp.status_code >= 400:
-                self.console.print(f"[red]{prov['label']} API error {resp.status_code}: {resp.text[:200]}[/]")
+                detail = ""
+                try:
+                    detail = resp.json().get("error", {}).get("message", resp.text[:200])
+                except Exception:
+                    detail = resp.text[:200]
+                self.console.print(f"[red]{prov['label']} API error {resp.status_code}: {detail}[/]")
                 return None
         except Exception as e:
             if _logger:
