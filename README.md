@@ -50,7 +50,7 @@
 | **Desktop app / IDE** | No | Yes (VS Code) | No | No | Yes (VS Code, desktop) |
 | **Install** | `pip install .` | `npm install -g` | `pip install` | `npm install -g` | `go install` / `npm` |
 | **Language** | Python | TypeScript | Python | TypeScript | Go |
-| **Tests** | 196 | Yes | Yes | Yes | Yes |
+| **Tests** | 232 | Yes | Yes | Yes | Yes |
 | **Open source** | Yes (AGPL-3.0) | Yes (Apache-2.0) | Yes (Apache-2.0) | Yes (Apache-2.0) | Yes (MIT) |
 
 **Kodiqa's unique advantages**: free local models, 7 API providers, multi-model consensus, custom plugins, sub-agents, LSP integration, 5 themes, project templates, batch edit review, conversation branching, budget limits, auto-lint, and auto model discovery — features no other agent offers together.
@@ -79,6 +79,7 @@ kodiqa
 - **Tab autocomplete** — slash commands, model names, file paths (prompt_toolkit)
 - **Compact streaming** — hides code output, shows progress instead (toggle with `/verbose`)
 - **Stream interrupt** — press Esc or Ctrl+C to stop any response instantly
+- **Stream stall indicator** — animated spinner when response pauses (so you know it's still working)
 - **Thinking display** — shows spinner for `<think>` reasoning blocks, line count summary
 - **Multi-model consensus** — query all models, merge best answers
 - **3 permission modes** — default (confirm all), relaxed (auto file ops), auto (no confirms)
@@ -284,13 +285,17 @@ MCP tools are automatically available to the AI alongside built-in tools.
 | Shortcut | Full Model | Best For |
 |----------|-----------|----------|
 | `/model qwen3.5` / `qwen-plus` | qwen3.5-plus | Newest flagship |
-| `/model qwen3.5-flash` | qwen3.5-flash | Fast 3.5 |
-| `/model qwen-max` | qwen3-max | Most powerful |
-| `/model qwen-coder` | qwen3-coder-plus | Coding |
+| `/model qwen-max` / `qwen3-max` | qwen3-max | Most powerful |
+| `/model qwen-coder` / `qwen3-coder` | qwen3-coder-plus | Coding |
+| `/model qwen-coder-next` | qwen3-coder-next | Newest coder |
 | `/model qwq` | qwq-plus | Deep reasoning |
-| `/model qwen-long` | qwen-long-latest | 10M context |
-| `/model qwen-math` | qwen-math-plus | Math |
+| `/model qwen-flash` | qwen3.5-flash | Fast |
 | `/model qwen-turbo` | qwen-turbo | Cheapest/fastest |
+| `/model qwen-math` | qwen-math-plus | Math |
+| `/model glm-5` | glm-5 | Third-party (Coding Plan) |
+| `/model kimi` | kimi-k2.5 | Third-party (Coding Plan) |
+
+**Qwen Coding Plan**: If you have a Coding Plan subscription (`sk-sp-` key), `/key qwen` auto-detects it and configures the dedicated endpoint. Supports $3/mo Lite and $15/mo Pro tiers.
 
 ### OpenAI API Models (paid, requires API key)
 
@@ -453,10 +458,10 @@ find any bugs in this code
 
 ```
 ~/LLMS/kodiqa/
-  kodiqa.py          # Main agent (~4252 lines)
+  kodiqa.py          # Main agent (~4970 lines)
   actions.py         # 26 action handlers (~950 lines)
   tools.py           # Tool schemas (~461 lines)
-  config.py          # Config, themes, provider registry (~489 lines)
+  config.py          # Config, themes, provider registry (~571 lines)
   web.py             # Web search + page fetch (~194 lines)
   memory.py          # SQLite persistent memory (82 lines)
   mcp.py             # MCP client (~176 lines)

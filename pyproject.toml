@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kodiqa"
-version = "3.0.0"
+version = "3.1.0"
 description = "AI coding agent that runs anywhere — 7 providers, 26 tools, plugins, sub-agents, LSP, themes, RAG, 63 commands"
 readme = "README.md"
 license = {text = "MIT"}

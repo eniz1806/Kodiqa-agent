@@ -6,21 +6,22 @@ An open-source AI coding agent that runs anywhere — free locally with Ollama, 
 ## Architecture
 
 ```
-kodiqa.py    (~4252 lines)  Main agent: Kodiqa class, StreamWriter, KodiqaCompleter, prompt_toolkit UI, chat loops, slash commands, modes, MCP, branching, auto-discovery, workspace boundary, auto-commit, budget, lint, plugins, sub-agents, LSP, voice, themes
+kodiqa.py    (~4970 lines)  Main agent: Kodiqa class, StreamWriter, StreamStallIndicator, KodiqaCompleter, prompt_toolkit UI, chat loops, slash commands, modes, MCP, branching, auto-discovery, workspace boundary, auto-commit, budget, lint, plugins, sub-agents, LSP, voice, themes
 actions.py   (~950 lines)   26 action handlers: file ops, git, search, web, memory, clipboard, multi_edit, edit queue + diff preview
 tools.py     (~461 lines)   Tool schemas (Claude native format, converted to OpenAI format for OpenAI-compat providers)
-config.py    (~489 lines)   Constants, provider registry, model aliases, themes, system prompt, config, .kodiqaignore
+config.py    (~571 lines)   Constants, provider registry, model aliases, themes, personas, changelog, Qwen Coding Plan models, system prompt, config, .kodiqaignore
 web.py       (~194 lines)   3 search engines (DuckDuckGo, Google scrape, Google API) + page fetcher
 memory.py    (82 lines)     SQLite-backed persistent memory store
 mcp.py       (~176 lines)   MCP client: MCPServer (stdio JSON-RPC transport) + MCPManager (multi-server)
 templates.py (61 lines)     5 project templates for /init command
 lsp.py       (~220 lines)   LSP client for Language Server Protocol integration
+embeddings.py (~93 lines)   SQLite-backed vector store for RAG search
 ```
 
 ## Test Suite
 
 ```
-tests/           196 tests, all passing (~0.24s)
+tests/           232 tests, all passing (~0.3s)
   conftest.py          Shared fixtures (sample_file, sample_tree, memory_store)
   test_parse_actions   Action parsing (~18 tests)
   test_config          Config functions + provider registry (~22 tests)
@@ -34,6 +35,7 @@ tests/           196 tests, all passing (~0.24s)
   test_mcp             MCP client (~27 tests)
   test_new_features    Thinking, branching, slash commands (~16 tests)
   test_features_v2     Themes, pin, alias, optimizer, templates, LSP, plugins, agents (~31 tests)
+  test_features_v3     Changelog, stats, personas, profiles, refactor, history, embeddings, diagrams (~36 tests)
 ```
 
 ## Dual-Mode Design
@@ -52,7 +54,7 @@ tests/           196 tests, all passing (~0.24s)
 | DeepSeek | `deepseek_api_key` | `get_openai_provider()` | `api.deepseek.com` | cyan |
 | Groq | `groq_api_key` | `get_openai_provider()` | `api.groq.com` | red |
 | Mistral | `mistral_api_key` | `get_openai_provider()` | `api.mistral.ai` | magenta |
-| Qwen | `qwen_api_key` | `get_openai_provider()` | `dashscope-intl.aliyuncs.com` | blue |
+| Qwen | `qwen_api_key` | `get_openai_provider()` | `dashscope-intl.aliyuncs.com` or `coding-intl.dashscope.aliyuncs.com` | blue |
 
 ### Provider Registry (config.py: `OPENAI_COMPAT_PROVIDERS`)
 All 5 OpenAI-compatible providers share one implementation via a registry dict:
@@ -126,17 +128,27 @@ def _dispatch_chat(self, user_msg):
 | `mistral-small` | mistral-small-latest |
 | `codestral` | codestral-latest |
 
-### Qwen API (13 aliases)
+### Qwen API (16 aliases)
 | Alias | Model ID | Best For |
 |-------|----------|----------|
-| `qwen3.5` / `qwen-plus` | qwen3.5-plus-2026-02-15 | Newest flagship |
-| `qwen3.5-flash` | qwen3.5-flash | Fast 3.5 |
-| `qwen-max` | qwen3-max | Most powerful |
-| `qwen-coder` | qwen3-coder-plus | Coding |
+| `qwen3.5` / `qwen-plus` | qwen3.5-plus | Newest flagship |
+| `qwen-max` / `qwen3-max` | qwen3-max | Most powerful |
+| `qwen-coder` / `qwen3-coder` | qwen3-coder-plus | Coding |
+| `qwen-coder-next` | qwen3-coder-next | Newest coder |
 | `qwq` | qwq-plus | Deep reasoning |
-| `qwen-long` | qwen-long-latest | 10M context |
-| `qwen-math` | qwen-math-plus | Math |
+| `qwen-flash` / `qwen3.5-flash` | qwen3.5-flash | Fast |
 | `qwen-turbo` | qwen-turbo | Cheapest/fastest |
+| `qwen-math` | qwen-math-plus | Math |
+| `glm-5` | glm-5 | Third-party (Coding Plan) |
+| `kimi` | kimi-k2.5 | Third-party (Coding Plan) |
+
+#### Qwen Coding Plan Support
+- Detects `sk-sp-` keys automatically during `/key qwen`
+- Asks region: International (Singapore) or China (Beijing)
+- Endpoint: `coding-intl.dashscope.aliyuncs.com/v1` (dedicated, not regular DashScope)
+- Auto-remaps `qwen3-max` → `qwen3-max-2026-01-23` for Coding Plan compatibility
+- `QWEN_CODING_PLAN_MODELS` set in config.py lists supported models
+- Region persisted in `settings.json` as `qwen_region`, restored on startup
 
 ### Auto Model Discovery
 - `_fetch_api_models()` fetches live model lists from all API providers with keys set
@@ -176,7 +188,7 @@ def _dispatch_chat(self, user_msg):
 - `bin/kodiqa` — shell script that runs venv Python directly
 - `pyproject.toml` — pip-installable package with `kodiqa` entry point
 - Install: `pip install .` or `pip install -e .` (editable)
-- Current version: v2.0.0
+- Current version: v3.1.0
 
 ## Key Patterns
 
@@ -274,7 +286,7 @@ def _dispatch_chat(self, user_msg):
 - `~/.kodiqa/exports/` — exported session markdown files
 - `~/.kodiqa/error.log` — error log
 
-### Slash Commands (49 total)
+### Slash Commands (63 total)
 | Command | Description |
 |---------|-------------|
 | `/model <name>` | Switch model (interactive picker if no arg) |
@@ -324,6 +336,20 @@ def _dispatch_chat(self, user_msg):
 | `/agents` | List running/completed sub-agents |
 | `/lsp [start\|stop]` | Start/stop Language Server Protocol |
 | `/voice` | Voice input via sox + Whisper |
+| `/changelog` | Show version history |
+| `/stats` | Session metrics (files, tools, time, cost) |
+| `/review-local` | AI review of staged git changes |
+| `/test <file>` | Auto-generate unit tests |
+| `/persona <name>` | Switch AI persona (security-expert, code-reviewer, teacher, architect, debugger) |
+| `/patch` | Apply diff/patch from clipboard |
+| `/profile` | Save/load config profiles |
+| `/refactor` | Multi-file refactoring (rename, extract) |
+| `/history` | Browse and resume past sessions |
+| `/watch <path>` | Watch files for changes |
+| `/embed [path]` | Index files for RAG search |
+| `/rag <query>` | RAG search + AI answer |
+| `/debug <script>` | Run script, catch errors, debug with AI |
+| `/diagram <desc>` | Generate Mermaid diagram |
 | `/help` | Show help |
 | `/quit` | Exit |
 
@@ -367,7 +393,7 @@ Add to `MODEL_ALIASES` (Ollama), `CLAUDE_ALIASES` (Claude API), or the provider'
 Add the handler in `_handle_slash()` method in `kodiqa.py`. Update `/help` text. Add to `_SLASH_COMMANDS` list.
 
 ## Conventions
-- 165 tests via pytest (`tests/` directory)
+- 232 tests via pytest (`tests/` directory)
 - No type hints — plain Python 3.9 style
 - Rich library for all terminal UI (panels, markdown, prompts, status spinners)
 - All file paths are expanded with `os.path.expanduser()` before use
