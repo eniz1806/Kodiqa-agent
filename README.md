@@ -538,3 +538,9 @@ pytest -v          # 284 tests, all passing
 - Models pulled automatically on first run, or `ollama pull qwen3-coder`
 - (Optional) Claude API key for Claude models
 - (Optional) DashScope API key for Qwen API models
+
+## License
+
+Kodiqa is open source under the [AGPL-3.0 License](LICENSE).
+
+For commercial use without AGPL obligations, see [Commercial License](COMMERCIAL_LICENSE.md) or contact [eniz@kodiqa.com](mailto:eniz@kodiqa.com).
