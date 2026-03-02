@@ -454,8 +454,13 @@ class KodiqaCompleter(Completer):
                     else:
                         yield from self._complete_path(word)
             else:
+                # @file references
+                if word.startswith("@"):
+                    prefix = word[1:]  # strip @
+                    for c in self._complete_path(prefix):
+                        yield Completion("@" + c.text, start_position=-len(word))
                 # File paths
-                if word.startswith(("/", "~", ".")) or "/" in word:
+                elif word.startswith(("/", "~", ".")) or "/" in word:
                     yield from self._complete_path(word)
         except Exception:
             return
@@ -563,6 +568,8 @@ class Kodiqa:
         # LSP client
         self._lsp_client = None
         # v3.0 features
+        self._pending_files = []
+        self._pending_images = []
         self._persona = None
         self._session_stats = {
             "files_read": 0, "files_written": 0, "files_edited": 0,
@@ -677,6 +684,141 @@ class Kodiqa:
                 pass
         return env
 
+    # ── @file references, image paste, auto-detection ──
+
+    def _process_at_references(self, user_input):
+        """Parse @file references and auto-detect image paths in user input."""
+        import re
+        files = []
+        images = []
+        IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
+
+        # 1) Explicit @file references
+        at_pattern = r'@([\w./~\-]+)'
+        for match in re.finditer(at_pattern, user_input):
+            ref = match.group(1)
+            path = os.path.expanduser(ref)
+            if not os.path.isabs(path):
+                path = os.path.join(self.cwd, path)
+            path = os.path.abspath(path)
+            if not os.path.isfile(path):
+                continue
+            ext = os.path.splitext(path)[1].lower()
+            if ext in IMAGE_EXTS:
+                img = self._read_image_for_embed(path)
+                if img:
+                    images.append(img)
+                    self.console.print(f"  [dim]+ {os.path.basename(path)} (image, {os.path.getsize(path) // 1024}KB)[/]")
+            else:
+                fc = self._read_file_for_embed(path)
+                if fc:
+                    files.append(fc)
+                    lines = fc["content"].count("\n") + 1
+                    self.console.print(f"  [dim]+ {fc['rel_path']} ({lines} lines)[/]")
+        # Remove @refs from text
+        cleaned = re.sub(at_pattern, lambda m: m.group(1), user_input)
+
+        # 2) Auto-detect bare image paths (~/path/img.png, /abs/img.jpg, ./rel/img.png)
+        img_pattern = r'((?:~/|/|\./)[\w./\-]+\.(?:png|jpg|jpeg|gif|webp))'
+        for match in re.finditer(img_pattern, cleaned):
+            img_path = os.path.expanduser(match.group(1))
+            if not os.path.isabs(img_path):
+                img_path = os.path.join(self.cwd, img_path)
+            img_path = os.path.abspath(img_path)
+            # Skip if already captured by @ref
+            if any(i["path"] == img_path for i in images):
+                continue
+            if os.path.isfile(img_path):
+                img = self._read_image_for_embed(img_path)
+                if img:
+                    images.append(img)
+                    self.console.print(f"  [dim]+ {os.path.basename(img_path)} (image, {os.path.getsize(img_path) // 1024}KB)[/]")
+
+        return cleaned, files, images
+
+    def _read_image_for_embed(self, path):
+        """Read an image file as base64 for embedding in messages."""
+        import base64
+        MEDIA_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                       ".gif": "image/gif", ".webp": "image/webp"}
+        ext = os.path.splitext(path)[1].lower()
+        media_type = MEDIA_TYPES.get(ext)
+        if not media_type:
+            return None
+        size = os.path.getsize(path)
+        if size > 5_000_000:
+            self.console.print(f"  [yellow]Image too large ({size // 1_000_000}MB), skipping[/]")
+            return None
+        try:
+            with open(path, "rb") as f:
+                data = base64.b64encode(f.read()).decode("utf-8")
+            return {"path": path, "media_type": media_type, "data": data}
+        except Exception:
+            return None
+
+    def _read_file_for_embed(self, path):
+        """Read a text file for embedding in messages."""
+        try:
+            with open(path, "r", errors="replace") as f:
+                content = f.read()
+            if len(content) > 10_000:
+                content = content[:10_000] + "\n... (truncated to 10KB)"
+            return {"path": path, "rel_path": os.path.relpath(path, self.cwd), "content": content}
+        except Exception:
+            return None
+
+    def _paste_clipboard_image(self):
+        """Try to read an image from the system clipboard."""
+        import base64, subprocess, platform
+        tmp = "/tmp/kodiqa_clipboard.png"
+        try:
+            if platform.system() == "Darwin":
+                # Try pngpaste first (brew install pngpaste)
+                r = subprocess.run(["pngpaste", tmp], capture_output=True, timeout=5)
+                if r.returncode != 0:
+                    # Fallback: osascript
+                    script = '''
+                    set theFile to (POSIX file "/tmp/kodiqa_clipboard.png")
+                    try
+                        set imgData to the clipboard as «class PNGf»
+                        set fp to open for access theFile with write permission
+                        write imgData to fp
+                        close access fp
+                    on error
+                        return "no image"
+                    end try
+                    '''
+                    r2 = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=5)
+                    if "no image" in (r2.stdout + r2.stderr):
+                        return None
+            else:
+                # Linux: xclip
+                r = subprocess.run(["xclip", "-selection", "clipboard", "-t", "image/png", "-o"],
+                                   capture_output=True, timeout=5)
+                if r.returncode == 0 and r.stdout:
+                    with open(tmp, "wb") as f:
+                        f.write(r.stdout)
+                else:
+                    return None
+            if os.path.isfile(tmp) and os.path.getsize(tmp) > 0:
+                with open(tmp, "rb") as f:
+                    data = base64.b64encode(f.read()).decode("utf-8")
+                os.remove(tmp)
+                self.console.print(f"  [dim]+ clipboard image ({len(data) * 3 // 4 // 1024}KB)[/]")
+                return {"path": "clipboard", "media_type": "image/png", "data": data}
+        except Exception:
+            pass
+        return None
+
+    def _append_files_to_text(self, text, files):
+        """Append file contents to message text."""
+        if not files:
+            return text
+        parts = [text, "\n\n--- Attached files ---"]
+        for f in files:
+            parts.append(f"\n### {f['rel_path']}\n```\n{f['content']}\n```")
+        return "\n".join(parts)
+
     def run(self):
         self._first_run_setup()
         self._detect_git()
@@ -705,7 +847,19 @@ class Kodiqa:
                 elif user_input.strip().startswith("/"):
                     self._handle_slash(user_input.strip())
                 else:
-                    self._chat(user_input)
+                    # Process @file references, auto-detect images, !img paste
+                    user_input, attached_files, attached_images = self._process_at_references(user_input)
+                    if "!img" in user_input:
+                        img = self._paste_clipboard_image()
+                        if img:
+                            attached_images.append(img)
+                        elif not attached_images:
+                            self.console.print("[dim]No image found on clipboard.[/]")
+                        user_input = user_input.replace("!img", "").strip()
+                    self._pending_files = attached_files
+                    self._pending_images = attached_images
+                    if user_input.strip():
+                        self._chat(user_input)
         except KeyboardInterrupt:
             self._quit()
 
@@ -2851,7 +3005,16 @@ class Kodiqa:
                 return
         except Exception:
             pass
-        self.history.append({"role": "user", "content": user_msg})
+        # Embed @file references (images as text fallback for local models)
+        msg_text = self._append_files_to_text(user_msg, self._pending_files)
+        if self._pending_images:
+            # Ollama supports images via 'images' field for vision models
+            ollama_images = [img["data"] for img in self._pending_images]
+            self.history.append({"role": "user", "content": msg_text, "images": ollama_images})
+        else:
+            self.history.append({"role": "user", "content": msg_text})
+        self._pending_files = []
+        self._pending_images = []
         while True:
             memories_ctx = self.memory.get_context()
             context_file_ctx = self._load_context_file()
@@ -2917,7 +3080,19 @@ class Kodiqa:
     # ── Claude chat (native tool_use API) ──
 
     def _chat_claude(self, user_msg):
-        self.history.append({"role": "user", "content": user_msg})
+        # Embed @file references and images into the message
+        msg_text = self._append_files_to_text(user_msg, self._pending_files)
+        if self._pending_images:
+            content = [{"type": "text", "text": msg_text}]
+            for img in self._pending_images:
+                content.append({"type": "image", "source": {
+                    "type": "base64", "media_type": img["media_type"], "data": img["data"],
+                }})
+            self.history.append({"role": "user", "content": content})
+        else:
+            self.history.append({"role": "user", "content": msg_text})
+        self._pending_files = []
+        self._pending_images = []
 
         while True:
             memories_ctx = self.memory.get_context()
@@ -3347,7 +3522,19 @@ class Kodiqa:
 
     def _chat_openai_compat(self, user_msg, provider):
         """Generic OpenAI-compatible chat loop (used by Qwen, OpenAI, DeepSeek, Groq, Mistral)."""
-        self.history.append({"role": "user", "content": user_msg})
+        # Embed @file references and images into the message
+        msg_text = self._append_files_to_text(user_msg, self._pending_files)
+        if self._pending_images:
+            content = [{"type": "text", "text": msg_text}]
+            for img in self._pending_images:
+                content.append({"type": "image_url", "image_url": {
+                    "url": f"data:{img['media_type']};base64,{img['data']}",
+                }})
+            self.history.append({"role": "user", "content": content})
+        else:
+            self.history.append({"role": "user", "content": msg_text})
+        self._pending_files = []
+        self._pending_images = []
 
         while True:
             memories_ctx = self.memory.get_context()
@@ -3479,15 +3666,38 @@ class Kodiqa:
                 messages.append(entry)
             elif role == "user":
                 content = msg.get("content", "")
-                # Skip Claude tool_result blocks
                 if isinstance(content, list):
-                    text_parts = []
-                    for block in content:
-                        if isinstance(block, dict) and block.get("type") == "tool_result":
-                            text_parts.append(str(block.get("content", "")))
-                        elif isinstance(block, str):
-                            text_parts.append(block)
-                    content = "\n".join(text_parts) if text_parts else ""
+                    # Check if it contains image blocks — pass through for vision
+                    has_images = any(isinstance(b, dict) and b.get("type") in ("image_url", "image")
+                                     for b in content)
+                    if has_images:
+                        # Convert Claude image format to OpenAI if needed
+                        openai_content = []
+                        for block in content:
+                            if isinstance(block, dict):
+                                if block.get("type") == "image":
+                                    src = block.get("source", {})
+                                    openai_content.append({"type": "image_url", "image_url": {
+                                        "url": f"data:{src.get('media_type', 'image/png')};base64,{src.get('data', '')}",
+                                    }})
+                                elif block.get("type") == "image_url":
+                                    openai_content.append(block)
+                                elif block.get("type") == "text":
+                                    openai_content.append(block)
+                                elif block.get("type") == "tool_result":
+                                    openai_content.append({"type": "text", "text": str(block.get("content", ""))})
+                        content = openai_content if openai_content else ""
+                    else:
+                        # Flatten text (existing behavior)
+                        text_parts = []
+                        for block in content:
+                            if isinstance(block, dict) and block.get("type") == "tool_result":
+                                text_parts.append(str(block.get("content", "")))
+                            elif isinstance(block, dict) and block.get("type") == "text":
+                                text_parts.append(block.get("text", ""))
+                            elif isinstance(block, str):
+                                text_parts.append(block)
+                        content = "\n".join(text_parts) if text_parts else ""
                 messages.append({"role": "user", "content": content})
         return messages
 

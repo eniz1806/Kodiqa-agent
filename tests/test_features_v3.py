@@ -323,6 +323,93 @@ class TestDiagram:
 
 # ── Command Count ──
 
+# ── @File References & Image Embedding ──
+
+class TestAtFileReferences:
+    def test_process_at_references_text_file(self, tmp_path):
+        from kodiqa import Kodiqa
+        agent = MagicMock(spec=Kodiqa)
+        agent.cwd = str(tmp_path)
+        agent.console = MagicMock()
+        f = tmp_path / "test.py"
+        f.write_text("print('hello')\n")
+        agent._read_file_for_embed = Kodiqa._read_file_for_embed.__get__(agent)
+        agent._read_image_for_embed = Kodiqa._read_image_for_embed.__get__(agent)
+        agent._process_at_references = Kodiqa._process_at_references.__get__(agent)
+        cleaned, files, images = agent._process_at_references(f"@test.py what is this?")
+        assert len(files) == 1
+        assert files[0]["rel_path"] == "test.py"
+        assert "print('hello')" in files[0]["content"]
+        assert len(images) == 0
+
+    def test_process_at_references_missing_file(self, tmp_path):
+        from kodiqa import Kodiqa
+        agent = MagicMock(spec=Kodiqa)
+        agent.cwd = str(tmp_path)
+        agent.console = MagicMock()
+        agent._read_file_for_embed = Kodiqa._read_file_for_embed.__get__(agent)
+        agent._read_image_for_embed = Kodiqa._read_image_for_embed.__get__(agent)
+        agent._process_at_references = Kodiqa._process_at_references.__get__(agent)
+        cleaned, files, images = agent._process_at_references("@nonexistent.py")
+        assert len(files) == 0
+        assert len(images) == 0
+
+    def test_process_at_references_image_file(self, tmp_path):
+        from kodiqa import Kodiqa
+        agent = MagicMock(spec=Kodiqa)
+        agent.cwd = str(tmp_path)
+        agent.console = MagicMock()
+        # Create a tiny PNG (1x1 pixel)
+        import base64
+        png_data = base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+        )
+        img = tmp_path / "test.png"
+        img.write_bytes(png_data)
+        agent._read_file_for_embed = Kodiqa._read_file_for_embed.__get__(agent)
+        agent._read_image_for_embed = Kodiqa._read_image_for_embed.__get__(agent)
+        agent._process_at_references = Kodiqa._process_at_references.__get__(agent)
+        cleaned, files, images = agent._process_at_references(f"@test.png what is this?")
+        assert len(images) == 1
+        assert images[0]["media_type"] == "image/png"
+        assert len(images[0]["data"]) > 0
+
+    def test_append_files_to_text(self):
+        from kodiqa import Kodiqa
+        agent = MagicMock(spec=Kodiqa)
+        agent._append_files_to_text = Kodiqa._append_files_to_text.__get__(agent)
+        result = agent._append_files_to_text("hello", [{"rel_path": "app.py", "content": "x=1"}])
+        assert "hello" in result
+        assert "app.py" in result
+        assert "x=1" in result
+
+    def test_append_files_empty(self):
+        from kodiqa import Kodiqa
+        agent = MagicMock(spec=Kodiqa)
+        agent._append_files_to_text = Kodiqa._append_files_to_text.__get__(agent)
+        result = agent._append_files_to_text("hello", [])
+        assert result == "hello"
+
+    def test_read_file_for_embed_truncates(self, tmp_path):
+        from kodiqa import Kodiqa
+        agent = MagicMock(spec=Kodiqa)
+        agent.cwd = str(tmp_path)
+        agent._read_file_for_embed = Kodiqa._read_file_for_embed.__get__(agent)
+        f = tmp_path / "big.txt"
+        f.write_text("x" * 20000)
+        result = agent._read_file_for_embed(str(f))
+        assert "truncated" in result["content"]
+        assert len(result["content"]) < 15000
+
+    def test_pending_init(self):
+        from kodiqa import Kodiqa
+        agent = MagicMock(spec=Kodiqa)
+        # These are set in __init__
+        assert hasattr(Kodiqa, '_process_at_references')
+        assert hasattr(Kodiqa, '_paste_clipboard_image')
+        assert hasattr(Kodiqa, '_append_files_to_text')
+
+
 class TestCommandCount:
     def test_total_slash_commands(self):
         from kodiqa import Kodiqa
