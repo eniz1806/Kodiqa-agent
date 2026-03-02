@@ -233,6 +233,76 @@ THEMES = {
     },
 }
 
+# ── Personas ──
+PERSONAS = {
+    "security-expert": {
+        "name": "Security Expert",
+        "prompt": "You are a security-focused expert. Always analyze code for vulnerabilities (XSS, SQLi, CSRF, etc.), suggest secure alternatives, and flag potential security risks before implementing features.",
+    },
+    "code-reviewer": {
+        "name": "Code Reviewer",
+        "prompt": "You are a meticulous code reviewer. Focus on code quality, performance, maintainability, and best practices. Point out potential bugs, suggest improvements, and ensure consistent style.",
+    },
+    "teacher": {
+        "name": "Teacher",
+        "prompt": "You are a patient coding teacher. Explain concepts thoroughly, provide examples, and break down complex topics. Ask questions to check understanding. Prefer educational explanations over just writing code.",
+    },
+    "architect": {
+        "name": "Software Architect",
+        "prompt": "You are a software architect. Focus on system design, patterns, scalability, and separation of concerns. Suggest architectural improvements and explain trade-offs of different approaches.",
+    },
+    "debugger": {
+        "name": "Debugger",
+        "prompt": "You are an expert debugger. When investigating issues, be methodical: reproduce, isolate, diagnose root cause, and fix. Always check edge cases and add regression tests.",
+    },
+}
+
+# ── Changelog ──
+CHANGELOG = [
+    {"version": "v3.0.0", "date": "2026-03-02", "changes": [
+        "Added /changelog — view version history",
+        "Added /stats — session metrics (files, tools, time, cost)",
+        "Added /review-local — AI reviews staged git changes",
+        "Added /test — auto-generate unit tests for any file",
+        "Added /persona — switch AI personality (security-expert, code-reviewer, teacher, architect, debugger)",
+        "Added /patch — apply diff/patch from clipboard",
+        "Added /profile — save/load config profiles",
+        "Added /refactor — AI-powered multi-file refactoring (rename, extract)",
+        "Added /history — browse and resume past sessions",
+        "Added /watch — file watcher with change notifications",
+        "Added /embed + /rag — RAG search with local embeddings (Ollama/OpenAI)",
+        "Added /debug — run script, catch errors, debug with AI",
+        "Added /diagram — generate Mermaid diagrams via AI",
+        "Enabled parallel tool calls for OpenAI-compatible providers",
+        "Fixed README test count and missing v2 commands",
+    ]},
+    {"version": "v2.0.0", "date": "2025-12-15", "changes": [
+        "15 new features: plugins, sub-agents, LSP, themes, templates, voice",
+        "5 UI themes (dark, light, dracula, monokai, nord)",
+        "Stream interrupt (Esc/Ctrl+C stops streaming instantly)",
+        "GitHub PR workflow (/pr, /review, /issue)",
+        "Pinned context (/pin, /unpin)",
+        "Command aliases (/alias, /unalias)",
+        "Desktop notifications (/notify)",
+        "Cost optimizer (/optimizer)",
+        "Session sharing (/share — styled HTML export)",
+        "Project templates (/init — 5 templates)",
+        "Custom tool plugins (/plugins)",
+        "Sub-agents (/agent, /agents — threaded background tasks)",
+        "LSP integration (/lsp — Python, TypeScript, Go)",
+        "Voice input (/voice — sox + Whisper)",
+    ]},
+    {"version": "v1.0.0", "date": "2025-10-01", "changes": [
+        "Initial release",
+        "26 tools, 7 API providers, MCP server support",
+        "Multi-model consensus mode",
+        "3 permission modes, plan mode, batch edit review",
+        "Context window management, conversation branching",
+        "Compact streaming, thinking display, tab autocomplete",
+        "Persistent memory (SQLite), session recovery",
+    ]},
+]
+
 DEFAULTS = {
     "max_iterations": MAX_ITERATIONS,
     "max_file_size": MAX_FILE_SIZE,

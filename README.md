@@ -7,15 +7,15 @@
 </p>
 
 <p align="center">
-  <em>49 slash commands &bull; 26 tools &bull; custom plugins &bull; sub-agents &bull; LSP &bull; 5 themes &bull; voice input</em>
+  <em>63 slash commands &bull; 26 tools &bull; RAG search &bull; custom personas &bull; plugins &bull; sub-agents &bull; LSP &bull; 5 themes</em>
 </p>
 
 <p align="center">
   <a href="#install"><img src="https://img.shields.io/badge/python-3.9+-blue?logo=python&logoColor=white" alt="Python 3.9+"/></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-purple" alt="License"/></a>
-  <a href="#testing"><img src="https://img.shields.io/badge/tests-196%20passing-brightgreen" alt="Tests"/></a>
+  <a href="#testing"><img src="https://img.shields.io/badge/tests-232%20passing-brightgreen" alt="Tests"/></a>
   <a href="#api-setup"><img src="https://img.shields.io/badge/providers-7-cyan" alt="7 Providers"/></a>
-  <a href="#26-tools"><img src="https://img.shields.io/badge/tools-26-orange" alt="26 Tools"/></a>
+  <a href="#26-tools"><img src="https://img.shields.io/badge/commands-63-orange" alt="63 Commands"/></a>
 </p>
 
 ---
@@ -46,11 +46,11 @@
 | **Thinking display** | Yes (spinner + summary) | Yes | No | Yes | Yes |
 | **Project indexing** | Yes (symbol extraction) | Yes | Yes (repo map) | No | Yes (LSP) |
 | **Session recovery** | Yes (auto-save) | Yes | No | No | Yes (multi-session) |
-| **Custom agents** | No | No | No | No | Yes |
+| **Custom agents** | Yes (sub-agents) | No | No | No | Yes |
 | **Desktop app / IDE** | No | Yes (VS Code) | No | No | Yes (VS Code, desktop) |
 | **Install** | `pip install .` | `npm install -g` | `pip install` | `npm install -g` | `go install` / `npm` |
 | **Language** | Python | TypeScript | Python | TypeScript | Go |
-| **Tests** | 165 | Yes | Yes | Yes | Yes |
+| **Tests** | 196 | Yes | Yes | Yes | Yes |
 | **Open source** | Yes (AGPL-3.0) | Yes (Apache-2.0) | Yes (Apache-2.0) | Yes (Apache-2.0) | Yes (MIT) |
 
 **Kodiqa's unique advantages**: free local models, 7 API providers, multi-model consensus, custom plugins, sub-agents, LSP integration, 5 themes, project templates, batch edit review, conversation branching, budget limits, auto-lint, and auto model discovery — features no other agent offers together.
@@ -108,7 +108,20 @@ kodiqa
 - **`.kodiqaignore`** — per-project file exclusion (like `.gitignore` for scans/searches)
 - **Budget limit** — `/budget 5` sets $5 session limit, warns at 80%, blocks at 100%
 - **Auto-lint** — `/lint ruff check --fix` runs linter after edits, feeds errors back to AI
-- **165 tests** — pytest test suite, all passing
+- **Custom personas** — `/persona` switches AI expertise (security-expert, code-reviewer, teacher, architect, debugger)
+- **RAG search** — `/embed` indexes codebase, `/rag` searches with AI-enhanced context
+- **Test generation** — `/test <file>` auto-generates unit tests
+- **Git diff review** — `/review-local` AI reviews staged changes
+- **Interactive debugger** — `/debug <script>` runs, catches errors, debugs with AI
+- **Diagram generation** — `/diagram` generates Mermaid diagrams via AI
+- **File watcher** — `/watch <path>` monitors for changes
+- **Config profiles** — `/profile save/load` manages settings presets
+- **Multi-file refactoring** — `/refactor rename/extract` across project
+- **Session history** — `/history` browses and resumes past sessions
+- **Clipboard patches** — `/patch` applies diffs from clipboard
+- **Changelog** — `/changelog` shows version history
+- **Session stats** — `/stats` shows metrics (files, tools, time, cost)
+- **232 tests** — pytest test suite, all passing
 
 ## Arrow-Key UI
 
@@ -163,6 +176,37 @@ Prompt uses a separator line (like Claude Code):
 | `/undo [path]` | Undo last edit / list undo history |
 | `/diff [args]` | Show git diff (supports --staged etc.) |
 | `/lint <cmd>` | Auto-lint after edits (`/lint off` to disable) |
+| `/pin <path>` | Pin file to always include in context |
+| `/unpin <path>` | Remove pinned file |
+| `/alias <name> <cmd>` | Create command alias |
+| `/unalias <name>` | Remove command alias |
+| `/notify` | Toggle desktop notifications for long tasks |
+| `/optimizer` | Toggle cost optimizer tips |
+| `/theme <name>` | Switch UI theme (dark/light/dracula/monokai/nord) |
+| `/share` | Export session as styled HTML |
+| `/pr [title]` | Create GitHub PR via gh CLI |
+| `/review [number]` | Review PR diff via gh CLI |
+| `/issue [number]` | View GitHub issue via gh CLI |
+| `/init [template]` | Scaffold project from template |
+| `/plugins` | List/reload custom tool plugins |
+| `/agent <task>` | Spawn sub-agent for background task |
+| `/agents` | List running/completed sub-agents |
+| `/lsp [start\|stop]` | Start/stop Language Server Protocol |
+| `/voice` | Voice input via sox + Whisper |
+| `/changelog` | Show version history |
+| `/stats` | Session metrics (files, tools, time, cost) |
+| `/review-local` | AI review of staged git changes |
+| `/test <file>` | Generate unit tests for a file |
+| `/persona <name>` | Switch AI persona (security-expert, code-reviewer, etc.) |
+| `/patch` | Apply diff/patch from clipboard |
+| `/profile` | Save/load config profiles |
+| `/refactor` | Multi-file refactoring (rename, extract) |
+| `/history` | Browse and resume past sessions |
+| `/watch <path>` | Watch files for changes |
+| `/embed [path]` | Index files for RAG search |
+| `/rag <query>` | RAG search + AI answer |
+| `/debug <script>` | Run script, catch errors, debug with AI |
+| `/diagram <desc>` | Generate Mermaid diagram |
 | `/help` | Show help |
 | `/quit` | Exit |
 
@@ -418,8 +462,9 @@ find any bugs in this code
   mcp.py             # MCP client (~176 lines)
   templates.py       # 5 project templates (61 lines)
   lsp.py             # LSP client (~220 lines)
+  embeddings.py      # RAG vector store (~100 lines)
   bin/kodiqa         # Global install script
-  tests/             # 196 tests (pytest)
+  tests/             # 232 tests (pytest)
   pyproject.toml     # Package config (pip install .)
   requirements.txt   # Dependencies
 
@@ -463,7 +508,7 @@ find any bugs in this code
 ## Testing
 
 ```bash
-pytest -v          # 165 tests, all passing
+pytest -v          # 232 tests, all passing
 ```
 
 ## Requirements

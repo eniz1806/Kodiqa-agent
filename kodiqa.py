@@ -31,6 +31,7 @@ from config import (
     CLAUDE_API_URL, QWEN_ALIASES, QWEN_API_URL, CONTEXT_FILE, KODIQA_DIR,
     CONFIG_FILE, SYSTEM_PROMPT, SKIP_DIRS, SKIP_EXTENSIONS,
     MAX_FILE_SIZE, DEFAULTS, OPENAI_COMPAT_PROVIDERS,
+    CHANGELOG, PERSONAS,
     load_settings, save_settings, load_config, save_default_config, load_kodiqaignore,
     is_claude_model, is_qwen_api_model, get_openai_provider, is_openai_compat_model,
 )
@@ -374,7 +375,28 @@ class KodiqaCompleter(Completer):
                         for sub in ("start", "stop", "status"):
                             if sub.startswith(word):
                                 yield Completion(sub, start_position=-len(word))
-                    elif cmd in ("/cd", "/scan", "/pin", "/unpin"):
+                    elif cmd in ("/persona",):
+                        for name in list(PERSONAS.keys()) + ["off"]:
+                            if name.startswith(word):
+                                yield Completion(name, start_position=-len(word))
+                    elif cmd in ("/profile",):
+                        for sub in ("save", "load", "list", "delete"):
+                            if sub.startswith(word):
+                                yield Completion(sub, start_position=-len(word))
+                    elif cmd in ("/history",):
+                        for sub in ("resume",):
+                            if sub.startswith(word):
+                                yield Completion(sub, start_position=-len(word))
+                    elif cmd in ("/refactor",):
+                        for sub in ("rename", "extract"):
+                            if sub.startswith(word):
+                                yield Completion(sub, start_position=-len(word))
+                    elif cmd in ("/watch",):
+                        for sub in ("stop", "list"):
+                            if sub.startswith(word):
+                                yield Completion(sub, start_position=-len(word))
+                        yield from self._complete_path(word)
+                    elif cmd in ("/cd", "/scan", "/pin", "/unpin", "/test", "/debug"):
                         yield from self._complete_path(word)
                     elif cmd in ("/restore",):
                         for n in self.agent._checkpoints.keys():
@@ -484,6 +506,15 @@ class Kodiqa:
         self._agent_counter = 0
         # LSP client
         self._lsp_client = None
+        # v3.0 features
+        self._persona = None
+        self._session_stats = {
+            "files_read": 0, "files_written": 0, "files_edited": 0,
+            "commands_run": 0, "searches": 0, "messages_sent": 0,
+            "tools_used": {},
+            "start_time": time.time(),
+        }
+        self._watchers = {}
         # Load .kodiqaignore
         self._load_kodiqaignore()
 
@@ -498,6 +529,9 @@ class Kodiqa:
         "/pin", "/unpin", "/alias", "/unalias", "/notify", "/optimizer", "/theme",
         "/share", "/pr", "/review", "/issue", "/init", "/plugins",
         "/agent", "/agents", "/lsp", "/voice",
+        "/changelog", "/stats", "/review-local", "/test", "/persona", "/patch",
+        "/profile", "/refactor", "/history", "/watch", "/embed", "/rag",
+        "/debug", "/diagram",
         "/help", "/quit",
     ]
 
@@ -842,10 +876,74 @@ class Kodiqa:
     def _quit(self):
         self._save_session()
         self._save_session_summary()
+        self._save_session_to_history()
+        # Stop watchers
+        for w in self._watchers.values():
+            w["active"] = False
+        self._watchers.clear()
         self.memory.close()
         self.mcp.stop_all()
         self._stop_ollama()
         self.console.print("[dim]Goodbye! Session saved.[/]")
+
+    def _track_tool(self, tool_name):
+        """Track tool usage in session stats."""
+        s = self._session_stats
+        s["tools_used"][tool_name] = s["tools_used"].get(tool_name, 0) + 1
+        if tool_name == "read_file":
+            s["files_read"] += 1
+        elif tool_name in ("write_file", "edit_file", "multi_edit", "search_replace_all", "diff_apply"):
+            s["files_edited"] += 1
+        elif tool_name == "run_command":
+            s["commands_run"] += 1
+        elif tool_name in ("web_search", "grep", "glob"):
+            s["searches"] += 1
+
+    def _save_session_to_history(self):
+        """Save current session to history index on quit."""
+        user_msgs = [m for m in self.history if m.get("role") == "user"]
+        if len(user_msgs) < 2:
+            return
+        try:
+            import datetime
+            history_dir = os.path.join(KODIQA_DIR, "history")
+            os.makedirs(history_dir, exist_ok=True)
+            first_user = next(
+                (m["content"] for m in self.history
+                 if m.get("role") == "user" and isinstance(m.get("content"), str)),
+                "",
+            )
+            entry = {
+                "timestamp": datetime.datetime.now().isoformat(),
+                "model": self.model,
+                "cwd": self.cwd,
+                "messages": len(self.history),
+                "user_messages": len(user_msgs),
+                "cost": self.session_tokens.get("cost", 0),
+                "tools_used": sum(self._session_stats.get("tools_used", {}).values()),
+                "topic": first_user[:100],
+            }
+            index_file = os.path.join(history_dir, "index.json")
+            index = []
+            if os.path.isfile(index_file):
+                try:
+                    with open(index_file, "r") as f:
+                        index = json.load(f)
+                except Exception:
+                    index = []
+            entry["id"] = len(index) + 1
+            index.append(entry)
+            if len(index) > 100:
+                index = index[-100:]
+            with open(index_file, "w") as f:
+                json.dump(index, f, indent=2)
+            # Save full session
+            saveable = [m for m in self.history if isinstance(m.get("content"), str)]
+            session_file = os.path.join(history_dir, f"session_{entry['id']}.json")
+            with open(session_file, "w") as f:
+                json.dump({"model": self.model, "cwd": self.cwd, "history": saveable}, f)
+        except Exception:
+            pass
 
     def _save_session_summary(self):
         """Auto-save conversation summary to project context file on quit."""
@@ -1141,6 +1239,28 @@ class Kodiqa:
                 "[bold]/cd <path>[/]     - Change working directory\n"
                 "[bold]/branch[/]        - Save/switch/list conversation branches\n"
                 "[bold]/mcp[/]           - Manage MCP tool servers (add/remove/list)\n"
+                "[bold]/pin[/] <path>     - Pin file to always include in context\n"
+                "[bold]/unpin[/] <path>   - Remove pinned file\n"
+                "[bold]/alias[/]         - Create command alias\n"
+                "[bold]/theme[/] <name>   - Switch theme (dark/light/dracula/monokai/nord)\n"
+                "[bold]/pr[/] [title]     - Create GitHub PR\n"
+                "[bold]/review[/] [n]     - Review PR diff\n"
+                "[bold]/agent[/] <task>   - Spawn sub-agent\n"
+                "[bold]/lsp[/]           - Language Server Protocol\n"
+                "[bold]/changelog[/]     - Show version history\n"
+                "[bold]/stats[/]         - Session metrics\n"
+                "[bold]/review-local[/]  - AI review of staged git changes\n"
+                "[bold]/test[/] <file>    - Generate unit tests\n"
+                "[bold]/persona[/] <name> - Switch AI persona\n"
+                "[bold]/patch[/]         - Apply diff from clipboard\n"
+                "[bold]/profile[/]       - Save/load config profiles\n"
+                "[bold]/refactor[/]      - Multi-file refactoring\n"
+                "[bold]/history[/]       - Browse past sessions\n"
+                "[bold]/watch[/] <path>   - Watch files for changes\n"
+                "[bold]/embed[/] [path]   - Index files for RAG search\n"
+                "[bold]/rag[/] <query>    - RAG search + AI answer\n"
+                "[bold]/debug[/] <script> - Run and debug script\n"
+                "[bold]/diagram[/] <desc> - Generate Mermaid diagram\n"
                 "[bold]/quit[/]          - Exit",
                 title="Commands", border_style="blue",
             ))
@@ -1676,6 +1796,167 @@ class Kodiqa:
             self._handle_lsp(arg)
         elif command == "/voice":
             self._handle_voice(arg)
+        elif command == "/changelog":
+            version_filter = arg.strip()
+            for entry in CHANGELOG:
+                if version_filter and version_filter not in entry["version"]:
+                    continue
+                lines = [f"[bold cyan]{entry['version']}[/] [dim]({entry['date']})[/]"]
+                for c in entry["changes"]:
+                    lines.append(f"  [green]\u2022[/] {c}")
+                self.console.print(Panel("\n".join(lines), border_style="blue"))
+        elif command == "/stats":
+            s = self._session_stats
+            elapsed = time.time() - s["start_time"]
+            mins = int(elapsed // 60)
+            secs = int(elapsed % 60)
+            total_tools = sum(s["tools_used"].values())
+            top_tools = sorted(s["tools_used"].items(), key=lambda x: -x[1])[:5]
+            lines = [
+                f"Session time:   {mins}m {secs}s",
+                f"Messages sent:  {s['messages_sent']}",
+                f"Tools used:     {total_tools}",
+                f"Files read:     {s['files_read']}",
+                f"Files edited:   {s['files_edited']}",
+                f"Commands run:   {s['commands_run']}",
+                f"Searches:       {s['searches']}",
+                f"Cost:           ${self.session_tokens.get('cost', 0):.4f}",
+            ]
+            if top_tools:
+                lines.append("")
+                lines.append("[bold]Top tools:[/]")
+                for name, count in top_tools:
+                    lines.append(f"  {name}: {count}")
+            self.console.print(Panel("\n".join(lines), title="Session Stats", border_style="blue"))
+        elif command == "/review-local":
+            try:
+                result = subprocess.run(["git", "diff", "--staged"], capture_output=True, text=True, timeout=10, cwd=self.cwd)
+                diff = result.stdout.strip()
+                label = "staged"
+                if not diff:
+                    result = subprocess.run(["git", "diff"], capture_output=True, text=True, timeout=10, cwd=self.cwd)
+                    diff = result.stdout.strip()
+                    label = "unstaged"
+                if not diff:
+                    self.console.print("[dim]No changes to review.[/]")
+                    return
+                self.console.print(f"[cyan]Reviewing {label} changes...[/]")
+                self._chat(
+                    f"Review this git diff for bugs, style issues, security concerns, and improvements. "
+                    f"Be concise but thorough. Group feedback by file.\n\n```diff\n{diff[:15000]}\n```"
+                )
+            except Exception as e:
+                self.console.print(f"[red]Error: {e}[/]")
+        elif command == "/test":
+            if not arg:
+                self.console.print("[dim]Usage: /test <file_path>[/]")
+                return
+            path = os.path.abspath(os.path.expanduser(arg.strip()))
+            if not os.path.isfile(path):
+                self.console.print(f"[red]File not found: {arg}[/]")
+                return
+            ext = os.path.splitext(path)[1]
+            frameworks = {".py": "pytest", ".ts": "jest", ".tsx": "jest", ".js": "jest", ".go": "go test"}
+            fw = frameworks.get(ext, "appropriate test framework")
+            rel = os.path.relpath(path, self.cwd)
+            self._chat(
+                f"Read {rel} and generate comprehensive unit tests for it using {fw}. "
+                f"Create a test file in the tests/ directory (or adjacent __tests__/ for JS/TS). "
+                f"Cover all public functions/methods, edge cases, and error paths. "
+                f"Follow existing test patterns if any tests exist in this project."
+            )
+        elif command == "/persona":
+            if not arg:
+                if self._persona:
+                    self.console.print(f"Current persona: [cyan]{self._persona}[/]")
+                self.console.print("[bold]Available personas:[/]")
+                for name, p in PERSONAS.items():
+                    marker = " [dim]<- active[/]" if name == self._persona else ""
+                    self.console.print(f"  [cyan]{name}[/] \u2014 {p['name']}{marker}")
+                self.console.print(f"  [cyan]off[/] \u2014 reset to default")
+            elif arg.strip().lower() == "off":
+                self._persona = None
+                self.console.print("[yellow]Persona reset to default.[/]")
+            elif arg.strip() in PERSONAS:
+                self._persona = arg.strip()
+                self.console.print(f"[green]Persona:[/] {PERSONAS[self._persona]['name']}")
+            else:
+                self.console.print(f"[red]Unknown persona: {arg}. Use /persona to list.[/]")
+        elif command == "/patch":
+            try:
+                result = subprocess.run(["pbpaste"], capture_output=True, text=True, timeout=5)
+                clip = result.stdout
+            except Exception:
+                self.console.print("[red]Clipboard not available.[/]")
+                return
+            if not clip.strip():
+                self.console.print("[dim]Clipboard is empty.[/]")
+                return
+            if not any(clip.lstrip().startswith(p) for p in ("diff ", "--- ", "@@", "Index:")):
+                self.console.print("[yellow]Clipboard doesn't look like a diff/patch.[/]")
+                self.console.print("[dim]Expected unified diff format (from git diff, etc.)[/]")
+                return
+            self._chat(
+                f"Apply this patch to the appropriate file(s). Read the target files first, "
+                f"then apply the changes using edit_file or diff_apply.\n\n```diff\n{clip[:15000]}\n```"
+            )
+        elif command == "/profile":
+            self._handle_profile(arg)
+        elif command == "/refactor":
+            if not arg:
+                self.console.print("[dim]Usage:[/]")
+                self.console.print("  [cyan]/refactor rename <old> <new>[/] \u2014 rename symbol across files")
+                self.console.print("  [cyan]/refactor extract <description>[/] \u2014 extract code to function/file")
+                self.console.print("  [cyan]/refactor <description>[/] \u2014 general refactoring")
+                return
+            parts = arg.split(None, 2)
+            sub = parts[0]
+            if sub == "rename" and len(parts) >= 3:
+                old_name, new_name = parts[1], parts[2]
+                self._chat(
+                    f"Refactor: rename '{old_name}' to '{new_name}' across the entire project.\n"
+                    f"1. Use grep to find all occurrences of '{old_name}' in {self.cwd}\n"
+                    f"2. Read each file that contains it\n"
+                    f"3. Use edit_file or search_replace_all to rename (be careful about partial matches)\n"
+                    f"4. Update imports, comments, and string references\n"
+                    f"5. Show a summary of all changes"
+                )
+            elif sub == "extract":
+                desc = " ".join(parts[1:]) if len(parts) > 1 else ""
+                self._chat(f"Refactor: extract code \u2014 {desc}. Read the relevant files, identify the code to extract, create the new function/module, and update all call sites.")
+            else:
+                self._chat(f"Refactor this codebase: {arg}. Use grep to find relevant files, read them, and apply the refactoring using edit_file or multi_edit.")
+        elif command == "/history":
+            self._handle_history(arg)
+        elif command == "/watch":
+            self._handle_watch(arg)
+        elif command == "/embed":
+            self._handle_embed(arg)
+        elif command == "/rag":
+            if not arg:
+                self.console.print("[dim]Usage: /rag <question> \u2014 search codebase with embeddings + AI[/]")
+                return
+            self._handle_rag(arg)
+        elif command == "/debug":
+            if not arg:
+                self.console.print("[dim]Usage: /debug <script> [args] \u2014 run script, catch errors, debug with AI[/]")
+                return
+            self._handle_debug(arg)
+        elif command == "/diagram":
+            if not arg:
+                self.console.print("[dim]Usage: /diagram <description>[/]")
+                self.console.print("[dim]Examples:[/]")
+                self.console.print("  [cyan]/diagram class hierarchy for this project[/]")
+                self.console.print("  [cyan]/diagram sequence diagram for login flow[/]")
+                return
+            self._chat(
+                f"Generate a Mermaid diagram for: {arg}\n\n"
+                f"Requirements:\n"
+                f"- Output a single ```mermaid code block\n"
+                f"- Use appropriate diagram type (flowchart, sequence, class, ER, etc.)\n"
+                f"- Keep it clear and readable\n"
+                f"- If describing this project's code, read the relevant files first"
+            )
         else:
             # Check user-defined aliases before giving up
             aliases = self.settings.get("aliases", {})
@@ -2069,6 +2350,7 @@ class Kodiqa:
     # ── Main chat dispatch ──
 
     def _chat(self, user_msg):
+        self._session_stats["messages_sent"] += 1
         self._auto_compact_if_needed()
 
         # Plan mode: intercept to handle planning flow
@@ -2478,6 +2760,8 @@ class Kodiqa:
             memories_ctx = self.memory.get_context()
             context_file_ctx = self._load_context_file()
             system_prompt = SYSTEM_PROMPT.format(cwd=self.cwd, model=self.model, memories=memories_ctx)
+            if self._persona and self._persona in PERSONAS:
+                system_prompt = PERSONAS[self._persona]["prompt"] + "\n\n" + system_prompt
             if context_file_ctx:
                 system_prompt += "\n\n" + context_file_ctx
             git_ctx = self._git_context()
@@ -2519,6 +2803,7 @@ class Kodiqa:
                     if len(result) > 20000:
                         result = result[:20000] + "\n... (truncated)"
                     results.append(f"[Result of {action['name']}]\n{result}")
+                self._track_tool(action['name'])
                 self.console.print(f"  [green]●[/] {action_label}")
             # Review queued edits if any
             if self.batch_edits and get_edit_queue():
@@ -2542,6 +2827,8 @@ class Kodiqa:
             memories_ctx = self.memory.get_context()
             context_file_ctx = self._load_context_file()
             system_prompt = CLAUDE_SYSTEM.format(cwd=self.cwd, model=self.model, memories=memories_ctx)
+            if self._persona and self._persona in PERSONAS:
+                system_prompt = PERSONAS[self._persona]["prompt"] + "\n\n" + system_prompt
             if context_file_ctx:
                 system_prompt += "\n\n" + context_file_ctx
             git_ctx = self._git_context()
@@ -2603,6 +2890,7 @@ class Kodiqa:
                 for tc_id, result in results_list:
                     tc_name = next((tc["name"] for tc in regular_calls if tc["id"] == tc_id), "?")
                     tc_input = next((tc.get("input", {}) for tc in regular_calls if tc["id"] == tc_id), {})
+                    self._track_tool(tc_name)
                     self.console.print(f"  [green]●[/] {_tool_label(tc_name, tc_input)}")
             elif len(regular_calls) == 1:
                 tc = regular_calls[0]
@@ -2612,6 +2900,7 @@ class Kodiqa:
                     if len(result) > 20000:
                         result = result[:20000] + "\n... (truncated)"
                     results_list.append((tc["id"], result))
+                self._track_tool(tc['name'])
                 self.console.print(f"  [green]●[/] {label}")
             for tc in mcp_calls:
                 label = _tool_label(tc["name"], tc.get("input", {}))
@@ -2965,6 +3254,8 @@ class Kodiqa:
             memories_ctx = self.memory.get_context()
             context_file_ctx = self._load_context_file()
             system_prompt = CLAUDE_SYSTEM.format(cwd=self.cwd, model=self.model, memories=memories_ctx)
+            if self._persona and self._persona in PERSONAS:
+                system_prompt = PERSONAS[self._persona]["prompt"] + "\n\n" + system_prompt
             if context_file_ctx:
                 system_prompt += "\n\n" + context_file_ctx
             git_ctx = self._git_context()
@@ -3023,6 +3314,7 @@ class Kodiqa:
                 for tc_id, result in results_list:
                     tc_name = next((tc["name"] for tc in regular_calls if tc["id"] == tc_id), "?")
                     tc_input = next((tc.get("input", {}) for tc in regular_calls if tc["id"] == tc_id), {})
+                    self._track_tool(tc_name)
                     self.console.print(f"  [green]●[/] {_tool_label(tc_name, tc_input)}")
             elif len(regular_calls) == 1:
                 tc = regular_calls[0]
@@ -3032,6 +3324,7 @@ class Kodiqa:
                     if len(result) > 20000:
                         result = result[:20000] + "\n... (truncated)"
                     results_list.append((tc["id"], result))
+                self._track_tool(tc["name"])
                 self.console.print(f"  [green]●[/] {label}")
             for tc in mcp_calls:
                 label = _tool_label(tc["name"], tc.get("input", {}))
@@ -3122,6 +3415,7 @@ class Kodiqa:
                         "max_tokens": 8192,
                         "stream": True,
                         "stream_options": {"include_usage": True},
+                        "parallel_tool_calls": True,
                     },
                     stream=True,
                     timeout=300,
@@ -4054,6 +4348,287 @@ class Kodiqa:
         # Use as prompt
         if text.strip():
             self._chat(text.strip())
+
+    # ── v3.0 Feature Handlers ──
+
+    def _handle_profile(self, arg):
+        profile_dir = os.path.join(KODIQA_DIR, "profiles")
+        os.makedirs(profile_dir, exist_ok=True)
+        parts = arg.split(None, 1) if arg else []
+        sub = parts[0] if parts else ""
+        name = parts[1].strip() if len(parts) > 1 else ""
+        if sub == "save":
+            if not name:
+                self.console.print("[dim]Usage: /profile save <name>[/]")
+                return
+            from config import THEMES
+            theme_name = next((k for k, v in THEMES.items() if v == self.theme), "dark")
+            profile = {
+                "model": self.model, "permission_mode": self.permission_mode,
+                "theme": theme_name, "persona": self._persona,
+                "compact_mode": self.compact_mode, "batch_edits": self.batch_edits,
+                "auto_commit": self.auto_commit, "lint_cmd": self.lint_cmd,
+                "optimizer": self._optimizer_enabled, "notify": self._notify_enabled,
+            }
+            path = os.path.join(profile_dir, f"{name}.json")
+            with open(path, "w") as f:
+                json.dump(profile, f, indent=2)
+            self.console.print(f"[green]Profile '{name}' saved.[/]")
+        elif sub == "load":
+            if not name:
+                self.console.print("[dim]Usage: /profile load <name>[/]")
+                return
+            path = os.path.join(profile_dir, f"{name}.json")
+            if not os.path.isfile(path):
+                self.console.print(f"[red]Profile not found: {name}[/]")
+                return
+            with open(path, "r") as f:
+                profile = json.load(f)
+            self.model = profile.get("model", self.model)
+            self.permission_mode = profile.get("permission_mode", "default")
+            self.compact_mode = profile.get("compact_mode", True)
+            self.batch_edits = profile.get("batch_edits", True)
+            self.auto_commit = profile.get("auto_commit", False)
+            self.lint_cmd = profile.get("lint_cmd", "")
+            self._optimizer_enabled = profile.get("optimizer", False)
+            self._notify_enabled = profile.get("notify", False)
+            self._persona = profile.get("persona")
+            from config import THEMES
+            self.theme = THEMES.get(profile.get("theme", "dark"), THEMES["dark"])
+            self.console.print(f"[green]Profile '{name}' loaded.[/] Model: [cyan]{self.model}[/]")
+        elif sub == "list":
+            try:
+                profiles = [f[:-5] for f in os.listdir(profile_dir) if f.endswith(".json")]
+            except OSError:
+                profiles = []
+            if profiles:
+                self.console.print("[bold]Saved profiles:[/]")
+                for p in sorted(profiles):
+                    self.console.print(f"  [cyan]{p}[/]")
+            else:
+                self.console.print("[dim]No profiles saved. Use /profile save <name>[/]")
+        elif sub == "delete":
+            if not name:
+                self.console.print("[dim]Usage: /profile delete <name>[/]")
+                return
+            path = os.path.join(profile_dir, f"{name}.json")
+            if os.path.isfile(path):
+                os.remove(path)
+                self.console.print(f"[yellow]Profile '{name}' deleted.[/]")
+            else:
+                self.console.print(f"[dim]Profile not found: {name}[/]")
+        else:
+            self.console.print("[dim]Usage: /profile save|load|list|delete <name>[/]")
+
+    def _handle_history(self, arg):
+        history_dir = os.path.join(KODIQA_DIR, "history")
+        index_file = os.path.join(history_dir, "index.json")
+        if not os.path.isfile(index_file):
+            self.console.print("[dim]No session history yet.[/]")
+            return
+        with open(index_file, "r") as f:
+            index = json.load(f)
+        parts = arg.split(None, 1) if arg else []
+        sub = parts[0] if parts else ""
+        if sub == "resume" and len(parts) > 1:
+            session_id = parts[1].strip()
+            session_file = os.path.join(history_dir, f"session_{session_id}.json")
+            if not os.path.isfile(session_file):
+                self.console.print(f"[red]Session {session_id} not found.[/]")
+                return
+            with open(session_file, "r") as f:
+                data = json.load(f)
+            self.history = data.get("history", [])
+            self.console.print(f"[green]Resumed session {session_id} ({len(self.history)} messages)[/]")
+        else:
+            self.console.print("[bold]Recent Sessions:[/]")
+            for entry in reversed(index[-20:]):
+                topic = entry.get("topic", "")[:60]
+                ts = entry.get("timestamp", "")[:16]
+                cost = entry.get("cost", 0)
+                model = entry.get("model", "?")
+                self.console.print(
+                    f"  [cyan]#{entry.get('id', '?')}[/] {ts} [dim]{model}[/] "
+                    f"[dim]{entry.get('user_messages', 0)} msgs[/] "
+                    f"{'$' + f'{cost:.3f}' if cost > 0 else ''} "
+                    f"[dim]{topic}[/]"
+                )
+            self.console.print("\n[dim]Usage: /history resume <id>[/]")
+
+    def _handle_watch(self, arg):
+        parts = arg.split(None, 1) if arg else []
+        sub = parts[0] if parts else ""
+        if sub == "stop":
+            name = parts[1].strip() if len(parts) > 1 else ""
+            if name and name in self._watchers:
+                self._watchers[name]["active"] = False
+                del self._watchers[name]
+                self.console.print(f"[yellow]Stopped watching: {name}[/]")
+            elif not name:
+                for w in self._watchers.values():
+                    w["active"] = False
+                self._watchers.clear()
+                self.console.print("[yellow]All watchers stopped.[/]")
+            return
+        if sub == "list":
+            if self._watchers:
+                for name, w in self._watchers.items():
+                    self.console.print(f"  [green]\u25cf[/] {name} \u2014 {w['path']}")
+            else:
+                self.console.print("[dim]No active watchers.[/]")
+            return
+        if not arg:
+            self.console.print("[dim]Usage: /watch <path> | /watch stop | /watch list[/]")
+            return
+        path = os.path.abspath(os.path.expanduser(arg.strip()))
+        if not os.path.exists(path):
+            self.console.print(f"[red]Path not found: {arg}[/]")
+            return
+        name = os.path.basename(path)
+        if name in self._watchers:
+            self.console.print(f"[dim]Already watching: {name}[/]")
+            return
+        watcher = {"path": path, "active": True, "last_mtime": {}}
+        self._watchers[name] = watcher
+        def poll_changes():
+            if os.path.isdir(path):
+                for root, dirs, files in os.walk(path):
+                    dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
+                    for f in files:
+                        fp = os.path.join(root, f)
+                        try:
+                            watcher["last_mtime"][fp] = os.path.getmtime(fp)
+                        except OSError:
+                            pass
+            else:
+                try:
+                    watcher["last_mtime"][path] = os.path.getmtime(path)
+                except OSError:
+                    pass
+            while watcher["active"]:
+                time.sleep(2)
+                changed = []
+                for fp, old_mtime in list(watcher["last_mtime"].items()):
+                    try:
+                        new_mtime = os.path.getmtime(fp)
+                        if new_mtime > old_mtime:
+                            watcher["last_mtime"][fp] = new_mtime
+                            changed.append(fp)
+                    except OSError:
+                        pass
+                if changed:
+                    rel_paths = [os.path.relpath(p, self.cwd) for p in changed]
+                    self.console.print(f"\n  [cyan]\u27f3 Files changed:[/] {', '.join(rel_paths)}")
+        t = threading.Thread(target=poll_changes, daemon=True)
+        t.start()
+        self.console.print(f"[green]Watching:[/] {path} [dim](use /watch stop to end)[/]")
+
+    def _handle_embed(self, arg):
+        try:
+            from embeddings import EmbeddingStore
+        except ImportError:
+            self.console.print("[red]embeddings module not found.[/]")
+            return
+        db_path = os.path.join(KODIQA_DIR, "embeddings.db")
+        store = EmbeddingStore(db_path)
+        target = os.path.abspath(arg.strip()) if arg else self.cwd
+        if self.api_keys.get("openai"):
+            embed_fn = lambda t: store.embed_openai(t, self.api_keys["openai"])
+            self.console.print("[dim]Using OpenAI embeddings[/]")
+        else:
+            embed_fn = store.embed_ollama
+            self.console.print("[dim]Using Ollama embeddings (nomic-embed-text)[/]")
+        count = 0
+        try:
+            with Status("Embedding files...", console=self.console, spinner="dots") as status:
+                for root, dirs, files in os.walk(target):
+                    dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
+                    for fname in files:
+                        ext = os.path.splitext(fname)[1].lower()
+                        if ext in SKIP_EXTENSIONS:
+                            continue
+                        fpath = os.path.join(root, fname)
+                        if os.path.getsize(fpath) > MAX_FILE_SIZE:
+                            continue
+                        try:
+                            store.index_file(fpath, embed_fn)
+                            count += 1
+                            status.update(f"Embedding... {count} files")
+                        except Exception:
+                            pass
+        except Exception as e:
+            self.console.print(f"[red]Embedding error: {e}[/]")
+        store.close()
+        self.console.print(f"[green]Embedded {count} files.[/]")
+
+    def _handle_rag(self, query):
+        try:
+            from embeddings import EmbeddingStore
+        except ImportError:
+            self.console.print("[red]embeddings module not found.[/]")
+            return
+        db_path = os.path.join(KODIQA_DIR, "embeddings.db")
+        if not os.path.isfile(db_path):
+            self.console.print("[yellow]No embeddings yet. Run /embed first.[/]")
+            return
+        store = EmbeddingStore(db_path)
+        try:
+            if self.api_keys.get("openai"):
+                query_emb = store.embed_openai(query, self.api_keys["openai"])
+            else:
+                query_emb = store.embed_ollama(query)
+            results = store.search(query_emb, top_k=5)
+        except Exception as e:
+            self.console.print(f"[red]RAG error: {e}[/]")
+            store.close()
+            return
+        store.close()
+        if not results:
+            self.console.print("[dim]No relevant results found.[/]")
+            return
+        context_parts = []
+        for score, path, text, start, end in results:
+            rel = os.path.relpath(path, self.cwd)
+            context_parts.append(f"### {rel} (lines {start}-{end}, relevance: {score:.2f})\n```\n{text}\n```")
+        context = "\n\n".join(context_parts)
+        self._chat(f"Based on these relevant code sections:\n\n{context}\n\nAnswer this question: {query}")
+
+    def _handle_debug(self, arg):
+        parts = arg.split()
+        script = parts[0]
+        ext = os.path.splitext(script)[1]
+        runners = {".py": "python", ".js": "node", ".ts": "npx tsx", ".rb": "ruby", ".go": "go run"}
+        runner = runners.get(ext, "")
+        cmd = f"{runner} {arg}" if runner else arg
+        self.console.print(f"[cyan]Running:[/] {cmd}")
+        try:
+            result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30, cwd=self.cwd)
+            stdout = result.stdout
+            stderr = result.stderr
+            exit_code = result.returncode
+        except subprocess.TimeoutExpired:
+            self.console.print("[red]Script timed out (30s).[/]")
+            return
+        except Exception as e:
+            self.console.print(f"[red]Error running script: {e}[/]")
+            return
+        if exit_code == 0:
+            self.console.print(f"[green]Script ran successfully (exit 0).[/]")
+            if stdout:
+                self.console.print(Panel(stdout[:2000], title="Output", border_style="green"))
+            return
+        self.console.print(f"[red]Script failed (exit {exit_code}).[/]")
+        if stderr:
+            self.console.print(Panel(stderr[:1000], title="Error", border_style="red"))
+        error_context = f"stdout:\n{stdout[:3000]}\n\nstderr:\n{stderr[:3000]}"
+        self._chat(
+            f"Debug this script. It failed with exit code {exit_code}.\n\n"
+            f"Script: {script}\nCommand: {cmd}\n\n"
+            f"Output:\n```\n{error_context}\n```\n\n"
+            f"Please:\n1. Read the script file to understand the code\n"
+            f"2. Analyze the error and identify the root cause\n"
+            f"3. Suggest and implement a fix"
+        )
 
     # ── Diagram Detection ──
 

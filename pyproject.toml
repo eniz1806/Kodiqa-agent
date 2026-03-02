@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kodiqa"
-version = "2.0.0"
-description = "AI coding agent that runs anywhere — 7 providers, 26 tools, plugins, sub-agents, LSP, themes, 49 commands"
+version = "3.0.0"
+description = "AI coding agent that runs anywhere — 7 providers, 26 tools, plugins, sub-agents, LSP, themes, RAG, 63 commands"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.9"
@@ -30,4 +30,4 @@ testpaths = ["tests"]
 pythonpath = ["."]
 
 [tool.setuptools]
-py-modules = ["kodiqa", "actions", "tools", "config", "web", "memory", "mcp", "templates", "lsp"]
+py-modules = ["kodiqa", "actions", "tools", "config", "web", "memory", "mcp", "templates", "lsp", "embeddings"]
