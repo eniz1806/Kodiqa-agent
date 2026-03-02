@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kodiqa — AI Coding Agent</title>
+<meta name="description" content="The AI coding agent that runs anywhere — free locally with Ollama, or supercharged by 7 cloud APIs. 26 tools, 69 commands, Python 3.9+.">
+<meta property="og:title" content="Kodiqa — AI Coding Agent">
+<meta property="og:description" content="One agent. Every model. Zero limits.">
+<meta property="og:image" content="https://raw.githubusercontent.com/eniz1806/Kodiqa-agent/main/assets/social-preview.png">
+<meta property="og:url" content="https://eniz1806.github.io/Kodiqa-agent/">
+<meta name="twitter:card" content="summary_large_image">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --purple:#7C3AED;--cyan:#06B6D4;--green:#10B981;--blue:#3B82F6;
+  --bg1:#0f0f23;--bg2:#1a1a3e;--bg3:#2d1b69;
+  --text:#e0e0f0;--dim:#8080a0;
+}
+html{scroll-behavior:smooth}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  background:var(--bg1);color:var(--text);overflow-x:hidden;
+  line-height:1.6;
+}
+
+/* ── Particles canvas ── */
+#particles{position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;pointer-events:none}
+
+/* ── Shared ── */
+section{position:relative;z-index:1;padding:80px 24px}
+.container{max-width:1100px;margin:0 auto}
+.fade-in{opacity:0;transform:translateY(30px);transition:opacity .7s ease,transform .7s ease}
+.fade-in.visible{opacity:1;transform:translateY(0)}
+
+/* ── Hero ── */
+.hero{
+  min-height:100vh;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;text-align:center;
+  position:relative;padding-top:60px;
+}
+.hero::before{
+  content:'';position:absolute;inset:0;
+  background:
+    radial-gradient(circle at 20% 30%,rgba(124,58,237,.2) 0%,transparent 50%),
+    radial-gradient(circle at 80% 70%,rgba(6,182,212,.2) 0%,transparent 50%),
+    radial-gradient(circle at 50% 50%,rgba(16,185,129,.08) 0%,transparent 60%);
+  pointer-events:none;z-index:0;
+}
+.hero>*{position:relative;z-index:1}
+.hero-logo{width:280px;margin-bottom:24px;filter:drop-shadow(0 0 40px rgba(124,58,237,.4))}
+.hero-title{
+  font-size:clamp(48px,10vw,96px);font-weight:900;letter-spacing:-3px;
+  background:linear-gradient(135deg,var(--purple),var(--cyan),var(--green),var(--purple));
+  background-size:300% 300%;
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+  background-clip:text;
+  animation:gradientShift 4s ease infinite;
+}
+@keyframes gradientShift{
+  0%,100%{background-position:0% 50%}
+  50%{background-position:100% 50%}
+}
+.hero-tagline{
+  font-size:clamp(18px,3vw,28px);color:#c0c0e0;margin:12px 0 8px;font-weight:300;
+}
+.hero-sub{font-size:16px;color:var(--dim);max-width:600px;margin:0 auto 40px}
+.hero-buttons{display:flex;gap:16px;flex-wrap:wrap;justify-content:center}
+.btn{
+  padding:14px 32px;border-radius:12px;font-size:16px;font-weight:600;
+  text-decoration:none;transition:all .3s ease;display:inline-flex;align-items:center;gap:8px;
+}
+.btn-primary{
+  background:linear-gradient(135deg,var(--purple),var(--cyan));color:#fff;
+  box-shadow:0 4px 24px rgba(124,58,237,.4);
+}
+.btn-primary:hover{transform:translateY(-2px);box-shadow:0 8px 32px rgba(124,58,237,.6)}
+.btn-secondary{
+  background:rgba(255,255,255,.06);color:var(--text);
+  border:1px solid rgba(255,255,255,.15);backdrop-filter:blur(10px);
+}
+.btn-secondary:hover{background:rgba(255,255,255,.12);transform:translateY(-2px)}
+.scroll-hint{
+  position:absolute;bottom:32px;left:50%;transform:translateX(-50%);
+  animation:bounce 2s ease infinite;color:var(--dim);font-size:24px;
+}
+@keyframes bounce{0%,100%{transform:translateX(-50%) translateY(0)}50%{transform:translateX(-50%) translateY(-10px)}}
+
+/* ── Stats ── */
+.stats{
+  background:linear-gradient(180deg,transparent,rgba(124,58,237,.06),transparent);
+  padding:60px 24px;
+}
+.stats-grid{
+  display:grid;grid-template-columns:repeat(4,1fr);gap:24px;
+  max-width:900px;margin:0 auto;text-align:center;
+}
+.stat-item{padding:24px}
+.stat-number{
+  font-size:48px;font-weight:900;
+  background:linear-gradient(135deg,var(--purple),var(--cyan));
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+}
+.stat-label{font-size:14px;color:var(--dim);margin-top:4px;text-transform:uppercase;letter-spacing:2px}
+
+/* ── Features ── */
+.features{padding:100px 24px}
+.section-title{
+  text-align:center;font-size:clamp(28px,5vw,42px);font-weight:800;margin-bottom:16px;
+}
+.section-sub{text-align:center;color:var(--dim);max-width:600px;margin:0 auto 60px;font-size:17px}
+.features-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:24px}
+.feature-card{
+  background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);
+  border-radius:16px;padding:32px;backdrop-filter:blur(12px);
+  transition:all .4s ease;position:relative;overflow:hidden;
+}
+.feature-card::before{
+  content:'';position:absolute;inset:0;border-radius:16px;
+  background:radial-gradient(circle at var(--mx,50%) var(--my,50%),rgba(124,58,237,.15),transparent 60%);
+  opacity:0;transition:opacity .4s ease;
+}
+.feature-card:hover::before{opacity:1}
+.feature-card:hover{
+  transform:translateY(-4px);border-color:rgba(124,58,237,.3);
+  box-shadow:0 8px 40px rgba(124,58,237,.15);
+}
+.feature-icon{font-size:36px;margin-bottom:16px;display:block}
+.feature-title{font-size:20px;font-weight:700;margin-bottom:8px}
+.feature-desc{color:var(--dim);font-size:15px;line-height:1.7}
+
+/* ── Terminal Demo ── */
+.demo{padding:100px 24px}
+.terminal{
+  max-width:900px;margin:0 auto;border-radius:16px;overflow:hidden;
+  box-shadow:0 20px 80px rgba(0,0,0,.5),0 0 60px rgba(124,58,237,.15);
+  border:1px solid rgba(255,255,255,.08);
+}
+.terminal-header{
+  background:rgba(255,255,255,.06);padding:12px 16px;display:flex;align-items:center;gap:8px;
+}
+.terminal-dot{width:12px;height:12px;border-radius:50%}
+.terminal-dot.red{background:#ff5f56}.terminal-dot.yellow{background:#ffbd2e}.terminal-dot.green{background:#27c93f}
+.terminal-title{flex:1;text-align:center;color:var(--dim);font-size:13px}
+.terminal-body{background:#1a1b26;padding:0;position:relative}
+.terminal-body img{width:100%;display:block}
+
+/* ── Providers ── */
+.providers{padding:80px 24px}
+.providers-row{
+  display:flex;flex-wrap:wrap;justify-content:center;gap:32px;margin-top:48px;
+}
+.provider{
+  display:flex;align-items:center;gap:10px;padding:12px 24px;
+  border-radius:12px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.06);
+  transition:all .3s ease;font-size:16px;font-weight:600;
+}
+.provider:hover{transform:scale(1.05);border-color:rgba(255,255,255,.2);background:rgba(255,255,255,.08)}
+.provider-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+
+/* ── Install ── */
+.install{padding:100px 24px}
+.install-box{
+  max-width:600px;margin:0 auto;background:rgba(255,255,255,.04);
+  border:1px solid rgba(255,255,255,.08);border-radius:16px;
+  padding:32px;text-align:center;backdrop-filter:blur(12px);
+}
+.install-box h3{font-size:24px;margin-bottom:24px;font-weight:700}
+.code-block{
+  background:#1a1b26;border-radius:10px;padding:20px 24px;
+  font-family:'SF Mono',Consolas,'Liberation Mono',Menlo,monospace;
+  font-size:15px;text-align:left;position:relative;margin-bottom:12px;
+  border:1px solid rgba(255,255,255,.06);
+}
+.code-block code{color:var(--green)}
+.code-block .prompt{color:var(--dim)}
+.copy-btn{
+  position:absolute;top:12px;right:12px;background:rgba(255,255,255,.1);
+  border:1px solid rgba(255,255,255,.15);border-radius:6px;color:var(--text);
+  padding:4px 12px;font-size:12px;cursor:pointer;transition:all .2s ease;
+}
+.copy-btn:hover{background:rgba(255,255,255,.2)}
+.install-note{color:var(--dim);font-size:14px;margin-top:16px}
+
+/* ── Comparison ── */
+.comparison{padding:80px 24px}
+.comparison table{
+  width:100%;max-width:900px;margin:0 auto;border-collapse:collapse;
+  background:rgba(255,255,255,.02);border-radius:16px;overflow:hidden;
+  border:1px solid rgba(255,255,255,.06);
+}
+.comparison th{
+  padding:16px 20px;text-align:left;font-size:14px;text-transform:uppercase;
+  letter-spacing:1px;color:var(--dim);background:rgba(255,255,255,.04);
+  border-bottom:1px solid rgba(255,255,255,.06);
+}
+.comparison td{
+  padding:14px 20px;border-bottom:1px solid rgba(255,255,255,.04);font-size:15px;
+}
+.comparison tr:last-child td{border-bottom:none}
+.comparison .check{color:var(--green);font-weight:700}
+.comparison .cross{color:#666}
+.comparison .highlight{color:var(--cyan);font-weight:600}
+
+/* ── Footer ── */
+.footer{
+  padding:40px 24px;text-align:center;color:var(--dim);font-size:14px;
+  border-top:1px solid rgba(255,255,255,.06);
+}
+.footer-links{display:flex;justify-content:center;gap:24px;margin-bottom:16px;flex-wrap:wrap}
+.footer-links a{color:var(--text);text-decoration:none;transition:color .2s}
+.footer-links a:hover{color:var(--cyan)}
+
+/* ── Responsive ── */
+@media(max-width:768px){
+  .stats-grid{grid-template-columns:repeat(2,1fr);gap:16px}
+  .stat-number{font-size:36px}
+  .features-grid{grid-template-columns:1fr}
+  .hero-logo{width:180px}
+  .providers-row{gap:16px}
+  .provider{padding:8px 16px;font-size:14px}
+}
+@media(max-width:480px){
+  section{padding:60px 16px}
+  .hero-buttons{flex-direction:column;align-items:center}
+  .btn{width:100%;justify-content:center}
+}
+</style>
+</head>
+<body>
+
+<!-- ── Particles ── -->
+<canvas id="particles"></canvas>
+
+<!-- ── Hero ── -->
+<section class="hero">
+  <img src="https://raw.githubusercontent.com/eniz1806/Kodiqa-agent/main/assets/logo.svg" alt="Kodiqa" class="hero-logo">
+  <h1 class="hero-title">Kodiqa</h1>
+  <p class="hero-tagline">One agent. Every model. Zero limits.</p>
+  <p class="hero-sub">The AI coding agent that runs anywhere &mdash; free locally with Ollama, or supercharged by 7 cloud APIs</p>
+  <div class="hero-buttons">
+    <a href="https://github.com/eniz1806/Kodiqa-agent" class="btn btn-primary">
+      <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+      GitHub
+    </a>
+    <a href="https://pypi.org/project/kodiqa/" class="btn btn-secondary">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18M3 9h18"/></svg>
+      PyPI
+    </a>
+    <a href="#install" class="btn btn-secondary">Quick Install</a>
+  </div>
+  <div class="scroll-hint">&darr;</div>
+</section>
+
+<!-- ── Stats ── -->
+<section class="stats fade-in">
+  <div class="stats-grid">
+    <div class="stat-item">
+      <div class="stat-number" data-target="7">0</div>
+      <div class="stat-label">Providers</div>
+    </div>
+    <div class="stat-item">
+      <div class="stat-number" data-target="26">0</div>
+      <div class="stat-label">Tools</div>
+    </div>
+    <div class="stat-item">
+      <div class="stat-number" data-target="69">0</div>
+      <div class="stat-label">Commands</div>
+    </div>
+    <div class="stat-item">
+      <div class="stat-number" data-target="284">0</div>
+      <div class="stat-label">Tests</div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Features ── -->
+<section class="features">
+  <div class="container">
+    <h2 class="section-title fade-in">Built for Real Work</h2>
+    <p class="section-sub fade-in">Not a toy. Not a wrapper. A full-featured coding agent with everything you need.</p>
+    <div class="features-grid">
+      <div class="feature-card fade-in">
+        <span class="feature-icon">&#9881;</span>
+        <h3 class="feature-title">7 API Providers</h3>
+        <p class="feature-desc">Ollama, Claude, OpenAI, DeepSeek, Groq, Mistral, Qwen &mdash; switch with one command. Multi-model consensus mode for critical decisions.</p>
+      </div>
+      <div class="feature-card fade-in">
+        <span class="feature-icon">&#9878;</span>
+        <h3 class="feature-title">Plan Mode</h3>
+        <p class="feature-desc">Two-phase workflow: AI explores and plans (read-only), you approve or revise, then it implements. Full control over every change.</p>
+      </div>
+      <div class="feature-card fade-in">
+        <span class="feature-icon">&#9874;</span>
+        <h3 class="feature-title">26 Tools</h3>
+        <p class="feature-desc">File ops, search, git, web, memory, clipboard, image/PDF reading, diff patching &mdash; with 3 permission modes and batch edit review.</p>
+      </div>
+      <div class="feature-card fade-in">
+        <span class="feature-icon">&#10697;</span>
+        <h3 class="feature-title">MCP Plugins</h3>
+        <p class="feature-desc">Connect any MCP server for custom tools. Sub-agents for background tasks. Custom plugin system for your own extensions.</p>
+      </div>
+      <div class="feature-card fade-in">
+        <span class="feature-icon">&#9733;</span>
+        <h3 class="feature-title">RAG Search</h3>
+        <p class="feature-desc">Embed your codebase with /embed, then search semantically with /rag. SQLite-backed vector store. Works with Ollama or OpenAI embeddings.</p>
+      </div>
+      <div class="feature-card fade-in">
+        <span class="feature-icon">&#9775;</span>
+        <h3 class="feature-title">5 Themes &amp; Personas</h3>
+        <p class="feature-desc">Dark, Light, Dracula, Monokai, Nord. Five AI personas: security expert, code reviewer, teacher, architect, debugger.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Terminal Demo ── -->
+<section class="demo">
+  <div class="container">
+    <h2 class="section-title fade-in">See It in Action</h2>
+    <p class="section-sub fade-in">Real terminal session &mdash; no magic, no editing.</p>
+    <div class="terminal fade-in">
+      <div class="terminal-header">
+        <div class="terminal-dot red"></div>
+        <div class="terminal-dot yellow"></div>
+        <div class="terminal-dot green"></div>
+        <div class="terminal-title">kodiqa &mdash; terminal</div>
+      </div>
+      <div class="terminal-body">
+        <img src="https://raw.githubusercontent.com/eniz1806/Kodiqa-agent/main/assets/demo.gif" alt="Kodiqa terminal demo" loading="lazy">
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Providers ── -->
+<section class="providers">
+  <div class="container">
+    <h2 class="section-title fade-in">Works With Your Favorite Models</h2>
+    <p class="section-sub fade-in">Run free locally or use any cloud API. Switch models in one command.</p>
+    <div class="providers-row fade-in">
+      <div class="provider"><div class="provider-dot" style="background:#22c55e"></div>Ollama</div>
+      <div class="provider"><div class="provider-dot" style="background:#eab308"></div>Claude</div>
+      <div class="provider"><div class="provider-dot" style="background:#f8f8f8"></div>OpenAI</div>
+      <div class="provider"><div class="provider-dot" style="background:#06b6d4"></div>DeepSeek</div>
+      <div class="provider"><div class="provider-dot" style="background:#ef4444"></div>Groq</div>
+      <div class="provider"><div class="provider-dot" style="background:#d946ef"></div>Mistral</div>
+      <div class="provider"><div class="provider-dot" style="background:#3b82f6"></div>Qwen</div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Install ── -->
+<section class="install" id="install">
+  <div class="container">
+    <div class="install-box fade-in">
+      <h3>Get Started in Seconds</h3>
+      <div class="code-block">
+        <button class="copy-btn" onclick="copyInstall()">Copy</button>
+        <code><span class="prompt">$</span> pip install kodiqa<br><span class="prompt">$</span> kodiqa</code>
+      </div>
+      <p class="install-note">Python 3.9+ &middot; Works on macOS &amp; Linux &middot; No API key required for local models</p>
+    </div>
+  </div>
+</section>
+
+<!-- ── Comparison ── -->
+<section class="comparison">
+  <div class="container">
+    <h2 class="section-title fade-in">How Kodiqa Compares</h2>
+    <p class="section-sub fade-in">The only agent that's truly free, truly open, and truly portable.</p>
+    <div class="fade-in" style="overflow-x:auto">
+      <table>
+        <thead>
+          <tr>
+            <th>Feature</th>
+            <th class="highlight">Kodiqa</th>
+            <th>Cursor</th>
+            <th>Copilot CLI</th>
+            <th>Aider</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>Free local models</td><td class="check">&#10003;</td><td class="cross">&#10007;</td><td class="cross">&#10007;</td><td class="check">&#10003;</td></tr>
+          <tr><td>7 cloud providers</td><td class="check">&#10003;</td><td class="cross">&#10007;</td><td class="cross">&#10007;</td><td class="cross">Partial</td></tr>
+          <tr><td>Plan mode</td><td class="check">&#10003;</td><td class="cross">&#10007;</td><td class="cross">&#10007;</td><td class="cross">&#10007;</td></tr>
+          <tr><td>MCP plugins</td><td class="check">&#10003;</td><td class="cross">&#10007;</td><td class="cross">&#10007;</td><td class="cross">&#10007;</td></tr>
+          <tr><td>RAG search</td><td class="check">&#10003;</td><td class="cross">&#10007;</td><td class="cross">&#10007;</td><td class="cross">&#10007;</td></tr>
+          <tr><td>Sub-agents</td><td class="check">&#10003;</td><td class="cross">&#10007;</td><td class="cross">&#10007;</td><td class="cross">&#10007;</td></tr>
+          <tr><td>Multi-model consensus</td><td class="check">&#10003;</td><td class="cross">&#10007;</td><td class="cross">&#10007;</td><td class="cross">&#10007;</td></tr>
+          <tr><td>69 slash commands</td><td class="check">&#10003;</td><td class="cross">&#10007;</td><td class="cross">&#10007;</td><td class="cross">Limited</td></tr>
+          <tr><td>Batch edit review</td><td class="check">&#10003;</td><td class="cross">&#10007;</td><td class="cross">&#10007;</td><td class="cross">&#10007;</td></tr>
+          <tr><td>Open source</td><td class="check">AGPL-3.0</td><td class="cross">&#10007;</td><td class="cross">&#10007;</td><td class="check">Apache</td></tr>
+          <tr><td>No subscription</td><td class="check">&#10003;</td><td class="cross">$20/mo</td><td class="cross">$10/mo</td><td class="check">&#10003;</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ── Footer ── -->
+<footer class="footer">
+  <div class="footer-links">
+    <a href="https://github.com/eniz1806/Kodiqa-agent">GitHub</a>
+    <a href="https://pypi.org/project/kodiqa/">PyPI</a>
+    <a href="https://github.com/eniz1806/Kodiqa-agent/blob/main/CONTRIBUTING.md">Contributing</a>
+    <a href="https://github.com/eniz1806/Kodiqa-agent/blob/main/CHANGELOG.md">Changelog</a>
+    <a href="https://github.com/eniz1806/Kodiqa-agent/blob/main/COMMERCIAL_LICENSE.md">Commercial License</a>
+  </div>
+  <p>AGPL-3.0 &middot; Made by <a href="https://github.com/eniz1806" style="color:var(--cyan);text-decoration:none">eniz1806</a></p>
+</footer>
+
+<script>
+/* ── Particles ── */
+(function(){
+  const c=document.getElementById('particles'),ctx=c.getContext('2d');
+  let w,h,particles=[];
+  function resize(){w=c.width=innerWidth;h=c.height=innerHeight}
+  resize();addEventListener('resize',resize);
+  for(let i=0;i<60;i++) particles.push({
+    x:Math.random()*w,y:Math.random()*h,
+    r:Math.random()*2+.5,
+    dx:(Math.random()-.5)*.3,dy:(Math.random()-.5)-.1,
+    o:Math.random()*.4+.1,
+    color:['rgba(124,58,237,','rgba(6,182,212,','rgba(16,185,129,'][Math.floor(Math.random()*3)]
+  });
+  function draw(){
+    ctx.clearRect(0,0,w,h);
+    particles.forEach(p=>{
+      p.x+=p.dx;p.y+=p.dy;
+      if(p.x<0)p.x=w;if(p.x>w)p.x=0;
+      if(p.y<0)p.y=h;if(p.y>h)p.y=0;
+      ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);
+      ctx.fillStyle=p.color+p.o+')';ctx.fill();
+    });
+    // lines between nearby particles
+    for(let i=0;i<particles.length;i++){
+      for(let j=i+1;j<particles.length;j++){
+        const dx=particles[i].x-particles[j].x,dy=particles[i].y-particles[j].y;
+        const dist=Math.sqrt(dx*dx+dy*dy);
+        if(dist<120){
+          ctx.beginPath();ctx.moveTo(particles[i].x,particles[i].y);
+          ctx.lineTo(particles[j].x,particles[j].y);
+          ctx.strokeStyle='rgba(124,58,237,'+(1-dist/120)*.08+')';
+          ctx.stroke();
+        }
+      }
+    }
+    requestAnimationFrame(draw);
+  }
+  draw();
+})();
+
+/* ── Scroll animations ── */
+const observer=new IntersectionObserver(entries=>{
+  entries.forEach(e=>{if(e.isIntersecting)e.target.classList.add('visible')});
+},{threshold:.15});
+document.querySelectorAll('.fade-in').forEach(el=>observer.observe(el));
+
+/* ── Animated counters ── */
+const counterObs=new IntersectionObserver(entries=>{
+  entries.forEach(e=>{
+    if(!e.isIntersecting)return;
+    const el=e.target,target=+el.dataset.target;
+    let current=0;const step=Math.ceil(target/40);
+    const timer=setInterval(()=>{
+      current+=step;if(current>=target){current=target;clearInterval(timer)}
+      el.textContent=current;
+    },30);
+    counterObs.unobserve(el);
+  });
+},{threshold:.5});
+document.querySelectorAll('.stat-number').forEach(el=>counterObs.observe(el));
+
+/* ── Card mouse glow ── */
+document.querySelectorAll('.feature-card').forEach(card=>{
+  card.addEventListener('mousemove',e=>{
+    const r=card.getBoundingClientRect();
+    card.style.setProperty('--mx',((e.clientX-r.left)/r.width*100)+'%');
+    card.style.setProperty('--my',((e.clientY-r.top)/r.height*100)+'%');
+  });
+});
+
+/* ── Copy install ── */
+function copyInstall(){
+  navigator.clipboard.writeText('pip install kodiqa && kodiqa');
+  const btn=document.querySelector('.copy-btn');
+  btn.textContent='Copied!';setTimeout(()=>btn.textContent='Copy',2000);
+}
+</script>
+</body>
+</html>

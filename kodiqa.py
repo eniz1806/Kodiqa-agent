@@ -1425,11 +1425,12 @@ class Kodiqa:
                     if 0 <= idx < len(new_models):
                         to_pull.append(new_models[idx][0])
                 except ValueError:
-                    # Maybe they typed a model name
-                    for model, _, _ in new_models:
-                        if part.lower() in model.lower():
-                            to_pull.append(model)
-                            break
+                    # Maybe they typed a model name (require 3+ chars to avoid accidental matches)
+                    if len(part) >= 3:
+                        for model, _, _ in new_models:
+                            if part.lower() in model.lower():
+                                to_pull.append(model)
+                                break
 
         if not to_pull:
             return
