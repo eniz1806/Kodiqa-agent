@@ -3493,8 +3493,24 @@ class Kodiqa:
 
     def _build_openai_request_body(self, messages, provider):
         """Build request body for OpenAI-compatible API, with provider-specific params."""
+        model = self.model
+        # Coding Plan (sk-sp-) remapping — qwen3-max isn't directly available
+        if provider == "qwen" and self.settings.get("qwen_region", "").startswith("coding"):
+            from config import QWEN_CODING_PLAN_MODELS
+            if model not in QWEN_CODING_PLAN_MODELS:
+                remap = {
+                    "qwen3-max": "qwen3-max-2026-01-23",
+                    "qwq-plus": "qwen3.5-plus",  # qwq not on coding plan
+                    "qwen3.5-flash": "qwen3.5-plus",
+                    "qwen-turbo": "qwen3.5-plus",
+                    "qwen-math-plus": "qwen3.5-plus",
+                    "qwen3-coder-flash": "qwen3-coder-plus",
+                }
+                if model in remap:
+                    model = remap[model]
+                    self.console.print(f"[dim]Coding Plan: using {model}[/]")
         body = {
-            "model": self.model,
+            "model": model,
             "messages": messages,
             "tools": self._get_openai_tools(),
             "max_tokens": 8192,

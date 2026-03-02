@@ -38,8 +38,11 @@ CLAUDE_ALIASES = {
 CLAUDE_API_URL = "https://api.anthropic.com/v1/messages"
 
 # Qwen API models (Alibaba Cloud DashScope - OpenAI-compatible)
-# Coding Plan (sk-sp- keys) supports: qwen3-max, qwen3.5-plus, qwen3-coder-plus, qwen3-coder-flash
-# Regular keys support all models below
+# Coding Plan (sk-sp- keys) — $3/mo Lite, $15/mo Pro — dedicated endpoint
+QWEN_CODING_PLAN_MODELS = {
+    "qwen3.5-plus", "qwen3-coder-plus", "qwen3-coder-next",
+    "qwen3-max-2026-01-23", "glm-4.7", "glm-5", "MiniMax-M2.5", "kimi-k2.5",
+}
 QWEN_ALIASES = {
     # Flagship
     "qwen-max": "qwen3-max",
@@ -50,7 +53,7 @@ QWEN_ALIASES = {
     "qwen3.5-plus": "qwen3.5-plus",
     # Coding
     "qwen-coder": "qwen3-coder-plus",
-    "qwen-coder-fast": "qwen3-coder-flash",
+    "qwen-coder-next": "qwen3-coder-next",
     "qwen3-coder": "qwen3-coder-plus",
     # Reasoning
     "qwq": "qwq-plus",
@@ -60,6 +63,9 @@ QWEN_ALIASES = {
     "qwen-turbo": "qwen-turbo",
     # Math
     "qwen-math": "qwen-math-plus",
+    # Third-party (Coding Plan only)
+    "glm-5": "glm-5",
+    "kimi": "kimi-k2.5",
 }
 
 QWEN_API_URL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions"
