@@ -472,16 +472,17 @@ find any bugs in this code
 
 ```
 ~/LLMS/kodiqa/
-  kodiqa.py          # Main agent (~4970 lines)
-  actions.py         # 26 action handlers (~950 lines)
-  tools.py           # Tool schemas (~461 lines)
-  config.py          # Config, themes, provider registry (~571 lines)
-  web.py             # Web search + page fetch (~194 lines)
+  kodiqa.py          # Main agent (5699 lines)
+  actions.py         # 26 action handlers (1022 lines)
+  tools.py           # Tool schemas (461 lines)
+  config.py          # Config, themes, provider registry (585 lines)
+  web.py             # Web search + page fetch (194 lines)
   memory.py          # SQLite persistent memory (82 lines)
-  mcp.py             # MCP client (~176 lines)
+  mcp.py             # MCP client (176 lines)
   templates.py       # 5 project templates (61 lines)
-  lsp.py             # LSP client (~220 lines)
-  embeddings.py      # RAG vector store (~100 lines)
+  lsp.py             # LSP client (220 lines)
+  embeddings.py      # RAG vector store (93 lines)
+  repomap.py         # Tree-sitter/regex repo map (157 lines)
   bin/kodiqa         # Global install script
   tests/             # 284 tests (pytest)
   pyproject.toml     # Package config (pip install .)
