@@ -2002,8 +2002,9 @@ class Kodiqa:
         if self.claude_key:
             masked = self.claude_key[:10] + "..." + self.claude_key[-4:]
             self.console.print(f"Current Claude key: [dim]{masked}[/]")
+            self.console.print("[dim]Paste new key to replace, or type 'remove' to delete[/]")
         try:
-            key = Prompt.ask("[bold yellow]Paste Claude API key (or 'remove' to delete)[/]")
+            key = Prompt.ask("[bold yellow]Paste Claude API key[/]")
             key = key.strip()
             if key.lower() == "remove":
                 self.claude_key = ""
@@ -2031,8 +2032,9 @@ class Kodiqa:
         if current_key:
             masked = current_key[:8] + "..." + current_key[-4:]
             self.console.print(f"Current {prov['label']} key: [dim]{masked}[/]")
+            self.console.print("[dim]Paste new key to replace, or type 'remove' to delete[/]")
         try:
-            key = Prompt.ask(f"[bold {prov['color']}]Paste {prov['label']} API key (or 'remove')[/]")
+            key = Prompt.ask(f"[bold {prov['color']}]Paste {prov['label']} API key[/]")
             key = key.strip()
             if key.lower() == "remove":
                 self.api_keys[provider] = ""
@@ -2049,6 +2051,11 @@ class Kodiqa:
                     self.qwen_key = key
                 save_settings(self.settings)
                 self.console.print(f"[green]{prov['label']} API key saved![/]")
+                # Auto-switch to this provider's default model if currently on local
+                if not is_claude_model(self.model) and not self._get_provider_for_model(self.model):
+                    default_alias = list(prov["aliases"].keys())[0]
+                    default_model = prov["aliases"][default_alias]
+                    self.console.print(f"[dim]Use /model {default_alias} to switch to {prov['label']}.[/]")
             else:
                 self.console.print(f"[yellow]Key should start with {prov['key_prefix']}. Not saved.[/]")
         except (EOFError, KeyboardInterrupt):
