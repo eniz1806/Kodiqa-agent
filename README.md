@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/eniz1806/Kodiqa-agent/main/assets/logo.png" alt="Kodiqa Logo" width="700"/>
+  <img src="https://raw.githubusercontent.com/eniz1806/Kodiqa-agent/main/assets/logo.svg" alt="Kodiqa Logo" width="700"/>
 </p>
 
 <p align="center">
