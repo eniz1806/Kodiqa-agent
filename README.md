@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.svg" alt="Kodiqa Logo" width="700"/>
+  <img src="https://raw.githubusercontent.com/eniz1806/Kodiqa-agent/main/assets/logo.svg" alt="Kodiqa Logo" width="700"/>
 </p>
 
 <p align="center">
@@ -27,7 +27,7 @@
 </p>
 
 <p align="center">
-  <img src="assets/demo.gif" alt="Kodiqa Demo" width="800"/>
+  <img src="https://raw.githubusercontent.com/eniz1806/Kodiqa-agent/main/assets/demo.gif" alt="Kodiqa Demo" width="800"/>
 </p>
 
 <!-- To regenerate the demo GIF: install vhs (https://github.com/charmbracelet/vhs), then run: vhs assets/demo.tape -->
@@ -65,7 +65,7 @@
 | **Install** | `pip install .` | `npm install -g` | `pip install` | `npm install -g` | `go install` / `npm` |
 | **Language** | Python | TypeScript | Python | TypeScript | Go |
 | **Tests** | 232 | Yes | Yes | Yes | Yes |
-| **Open source** | Yes (AGPL-3.0) | Yes (Apache-2.0) | Yes (Apache-2.0) | Yes (Apache-2.0) | Yes (MIT) |
+| **Open source** | Yes (GPL-3.0) | Yes (Apache-2.0) | Yes (Apache-2.0) | Yes (Apache-2.0) | Yes (MIT) |
 
 **Kodiqa's unique advantages**: free local models, 7 API providers, multi-model consensus, custom plugins, sub-agents, LSP integration, 5 themes, project templates, batch edit review, conversation branching, budget limits, auto-lint, and auto model discovery — features no other agent offers together.
 
@@ -136,7 +136,7 @@ kodiqa
 - **Clipboard patches** — `/patch` applies diffs from clipboard
 - **Changelog** — `/changelog` shows version history
 - **Session stats** — `/stats` shows metrics (files, tools, time, cost)
-- **232 tests** — pytest test suite, all passing
+- **284 tests** — pytest test suite, all passing
 
 ## Arrow-Key UI
 
@@ -483,7 +483,7 @@ find any bugs in this code
   lsp.py             # LSP client (~220 lines)
   embeddings.py      # RAG vector store (~100 lines)
   bin/kodiqa         # Global install script
-  tests/             # 232 tests (pytest)
+  tests/             # 284 tests (pytest)
   pyproject.toml     # Package config (pip install .)
   requirements.txt   # Dependencies
 
@@ -527,7 +527,7 @@ find any bugs in this code
 ## Testing
 
 ```bash
-pytest -v          # 232 tests, all passing
+pytest -v          # 284 tests, all passing
 ```
 
 ## Requirements
