@@ -2986,7 +2986,7 @@ class Kodiqa:
 
     def _resolve_model_name(self, name):
         """Resolve a model alias to full model name."""
-        from config import CLAUDE_ALIASES, MODEL_ALIASES, OPENAI_COMPAT_PROVIDERS
+        from config import CLAUDE_ALIASES, MODEL_ALIASES, OPENAI_COMPAT_PROVIDERS, QWEN_EXTRA_ALIASES
         if name in CLAUDE_ALIASES:
             return CLAUDE_ALIASES[name]
         if name in MODEL_ALIASES:
@@ -2995,6 +2995,8 @@ class Kodiqa:
             aliases = prov_data.get("aliases", {})
             if name in aliases:
                 return aliases[name]
+        if name in QWEN_EXTRA_ALIASES:
+            return QWEN_EXTRA_ALIASES[name]
         return name
 
     # ── Multi-model chat ──

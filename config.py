@@ -46,26 +46,23 @@ QWEN_CODING_PLAN_MODELS = {
 QWEN_ALIASES = {
     # Flagship
     "qwen-max": "qwen3-max",
-    "qwen3-max": "qwen3-max",
     "qwen-plus": "qwen3.5-plus",
-    "qwen-api": "qwen3.5-plus",
-    "qwen3.5": "qwen3.5-plus",
-    "qwen3.5-plus": "qwen3.5-plus",
     # Coding
     "qwen-coder": "qwen3-coder-plus",
     "qwen-coder-next": "qwen3-coder-next",
-    "qwen3-coder": "qwen3-coder-plus",
-    # Reasoning
-    "qwq": "qwq-plus",
-    # Fast / cheap
-    "qwen-flash": "qwen3.5-flash",
-    "qwen3.5-flash": "qwen3.5-flash",
-    "qwen-turbo": "qwen-turbo",
-    # Math
-    "qwen-math": "qwen-math-plus",
-    # Third-party (Coding Plan only)
+    # Third-party (Coding Plan)
     "glm-5": "glm-5",
+    "glm-4.7": "glm-4.7",
+    "minimax": "MiniMax-M2.5",
     "kimi": "kimi-k2.5",
+}
+# Extra aliases that resolve in _resolve_model_name but don't show in /models
+QWEN_EXTRA_ALIASES = {
+    "qwen3-max": "qwen3-max",
+    "qwen-api": "qwen3.5-plus",
+    "qwen3.5": "qwen3.5-plus",
+    "qwen3.5-plus": "qwen3.5-plus",
+    "qwen3-coder": "qwen3-coder-plus",
 }
 
 QWEN_API_URL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions"
@@ -412,6 +409,8 @@ def get_openai_provider(model_name):
     for prov_name, prov in OPENAI_COMPAT_PROVIDERS.items():
         if model_name in prov["aliases"] or model_name in prov["aliases"].values():
             return prov_name
+    if model_name in QWEN_EXTRA_ALIASES or model_name in QWEN_EXTRA_ALIASES.values():
+        return "qwen"
     return None
 
 

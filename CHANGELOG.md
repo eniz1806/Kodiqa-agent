@@ -4,6 +4,24 @@ All notable changes to Kodiqa are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [3.3.1] - 2026-03-03
+
+### Fixed
+- Qwen model list: removed duplicates, removed models not in Coding Plan (qwq-plus, qwen3.5-flash, qwen-turbo, qwen-math-plus)
+- Added missing Coding Plan models: glm-4.7, MiniMax-M2.5
+- Model pull prompt: single-letter input no longer accidentally matches model names
+
+### Added
+- GitHub Pages landing page with particle animation, glassmorphism, animated counters
+- GitHub Actions workflow for automatic Pages deployment
+- Open source projects section on kodiqa.com (live GitHub star counts)
+
+## [3.3.0] - 2026-03-02
+
+### Changed
+- License switched from GPL-3.0 to AGPL-3.0 (closes SaaS loophole)
+- Commercial license page for enterprise use
+
 ## [3.2.0] - 2026-03-02
 
 ### Added
