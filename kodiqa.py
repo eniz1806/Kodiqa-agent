@@ -2854,6 +2854,7 @@ class Kodiqa:
                 ("Reject", ""),
                 ("Show diff", ""),
                 ("Accept all", f"remaining {sum(1 for d in decisions if d is None)} edits"),
+                ("Accept all, don't ask again", "disable batch review"),
                 ("Reject all", ""),
             ]
             choice = self._arrow_select(options, self.console, default=0)
@@ -2902,7 +2903,14 @@ class Kodiqa:
                         decisions[i] = True
                 self.console.print(f"  [green]✓ All {total} edits accepted[/]")
                 break
-            elif choice == 4:  # Reject all
+            elif choice == 4:  # Accept all, don't ask again
+                for i in range(total):
+                    if decisions[i] is None:
+                        decisions[i] = True
+                self.batch_edits = False
+                self.console.print(f"  [green]✓ All {total} edits accepted — batch review disabled[/]")
+                break
+            elif choice == 5:  # Reject all
                 for i in range(total):
                     if decisions[i] is None:
                         decisions[i] = False
