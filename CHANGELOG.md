@@ -4,6 +4,12 @@ All notable changes to Kodiqa are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [3.3.4] - 2026-03-05
+
+### Fixed
+- ask_user input visibility: switched from raw `input()` to Rich `Prompt.ask` so typed text is visible
+- Batch edit review: added "Accept all, don't ask again" option to disable review for the session
+
 ## [3.3.1] - 2026-03-03
 
 ### Fixed
