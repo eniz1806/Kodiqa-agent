@@ -839,12 +839,10 @@ def do_ask_user(question, options=None, header=None, multi_select=False):
         padding=(1, 2),
     ))
 
-    # Use raw input() — Rich Prompt.ask can fail when terminal state is altered
-    # by stream interrupt monitor or stall indicator threads
+    from rich.prompt import Prompt
     try:
         if options and len(options) > 0:
-            _console.print("[bold yellow]Your choice: [/]", end="")
-            choice = input().strip()
+            choice = Prompt.ask("[bold yellow]Your choice[/]").strip()
 
             if multi_select:
                 # Parse multiple selections: "1,3" or "1 2 3" or "1, 3"
@@ -879,8 +877,7 @@ def do_ask_user(question, options=None, header=None, multi_select=False):
                     pass
                 return f"User answered: {choice}"
         else:
-            _console.print("[bold yellow]Your answer: [/]", end="")
-            answer = input().strip()
+            answer = Prompt.ask("[bold yellow]Your answer[/]").strip()
             return f"User answered: {answer}"
     except (EOFError, KeyboardInterrupt):
         _console.print("\n[dim]Cancelled.[/]")

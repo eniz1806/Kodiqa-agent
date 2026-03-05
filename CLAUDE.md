@@ -190,7 +190,7 @@ def _dispatch_chat(self, user_msg):
 - `bin/kodiqa` — shell script that runs venv Python directly
 - `pyproject.toml` — pip-installable package with `kodiqa` entry point
 - Install: `pip install kodiqa` (PyPI) or `pip install -e .` (editable)
-- Current version: v3.3.1 (AGPL-3.0)
+- Current version: v3.3.3 (AGPL-3.0)
 - PyPI: https://pypi.org/project/kodiqa/
 - Landing page: https://eniz1806.github.io/Kodiqa-agent/ (GitHub Pages, `docs/index.html`)
 
@@ -379,7 +379,7 @@ source ~/LLMS/kodiqa/venv/bin/activate && pytest -v
 - Python 3.9+, rich, beautifulsoup4, requests, prompt_toolkit, pytest (dev)
 - Ollama installed at `/Applications/Ollama.app`
 - Virtual environment at `./venv/`
-- Current version: v3.3.1 (AGPL-3.0)
+- Current version: v3.3.3 (AGPL-3.0)
 
 ### Adding a New Tool
 1. Add the handler function `do_<name>()` in `actions.py`
