@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kodiqa"
-version = "3.3.4"
+version = "3.3.5"
 description = "AI coding agent that runs anywhere — 7 providers, 26 tools, plugins, sub-agents, LSP, themes, RAG, 69 commands"
 readme = "README.md"
 license = {text = "AGPL-3.0-only"}
 requires-python = ">=3.9"
 authors = [
-    {name = "eniz1806"},
+    {name = "Kodiqa-Solutions"},
 ]
 keywords = [
     "ai", "coding-agent", "llm", "ollama", "claude", "openai",
@@ -46,10 +46,10 @@ dev = ["pytest>=7.0"]
 kodiqa = "kodiqa:main"
 
 [project.urls]
-Homepage = "https://github.com/eniz1806/Kodiqa-agent"
-Repository = "https://github.com/eniz1806/Kodiqa-agent"
-Issues = "https://github.com/eniz1806/Kodiqa-agent/issues"
-Changelog = "https://github.com/eniz1806/Kodiqa-agent/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/Kodiqa-Solutions/Kodiqa-agent"
+Repository = "https://github.com/Kodiqa-Solutions/Kodiqa-agent"
+Issues = "https://github.com/Kodiqa-Solutions/Kodiqa-agent/issues"
+Changelog = "https://github.com/Kodiqa-Solutions/Kodiqa-agent/blob/main/CHANGELOG.md"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

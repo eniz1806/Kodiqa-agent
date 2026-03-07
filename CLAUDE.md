@@ -192,7 +192,7 @@ def _dispatch_chat(self, user_msg):
 - Install: `pip install kodiqa` (PyPI) or `pip install -e .` (editable)
 - Current version: v3.3.4 (AGPL-3.0)
 - PyPI: https://pypi.org/project/kodiqa/
-- Landing page: https://eniz1806.github.io/Kodiqa-agent/ (GitHub Pages, `docs/index.html`)
+- Landing page: https://kodiqa-solutions.github.io/Kodiqa-agent/ (GitHub Pages, `docs/index.html`)
 
 ## Key Patterns
 

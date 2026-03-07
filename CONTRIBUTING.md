@@ -6,7 +6,7 @@ Thanks for your interest in contributing! Kodiqa is an open-source AI coding age
 
 1. Clone the repo:
    ```bash
-   git clone https://github.com/eniz1806/Kodiqa-agent.git
+   git clone https://github.com/Kodiqa-Solutions/Kodiqa-agent.git
    cd Kodiqa-agent
    ```
 
@@ -83,7 +83,7 @@ Add the handler in `_handle_slash()` in `kodiqa.py`. Update `/help` text and add
 
 ## Reporting Bugs
 
-Use the [Bug Report](https://github.com/eniz1806/Kodiqa-agent/issues/new?template=bug_report.yml) template.
+Use the [Bug Report](https://github.com/Kodiqa-Solutions/Kodiqa-agent/issues/new?template=bug_report.yml) template.
 
 ## License
 

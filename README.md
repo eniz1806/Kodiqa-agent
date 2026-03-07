@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/eniz1806/Kodiqa-agent/main/assets/logo.svg" alt="Kodiqa Logo" width="700"/>
+  <img src="https://raw.githubusercontent.com/Kodiqa-Solutions/Kodiqa-agent/main/assets/logo.svg" alt="Kodiqa Logo" width="700"/>
 </p>
 
 <p align="center">
@@ -13,21 +13,21 @@
 <p align="center">
   <a href="#install"><img src="https://img.shields.io/badge/python-3.9+-blue?logo=python&logoColor=white" alt="Python 3.9+"/></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-purple" alt="License"/></a>
-  <a href="https://github.com/eniz1806/Kodiqa-agent/actions/workflows/ci.yml"><img src="https://github.com/eniz1806/Kodiqa-agent/actions/workflows/ci.yml/badge.svg" alt="CI"/></a>
+  <a href="https://github.com/Kodiqa-Solutions/Kodiqa-agent/actions/workflows/ci.yml"><img src="https://github.com/Kodiqa-Solutions/Kodiqa-agent/actions/workflows/ci.yml/badge.svg" alt="CI"/></a>
   <a href="#testing"><img src="https://img.shields.io/badge/tests-284%20passing-brightgreen" alt="Tests"/></a>
   <a href="#api-setup"><img src="https://img.shields.io/badge/providers-7-cyan" alt="7 Providers"/></a>
   <a href="#26-tools"><img src="https://img.shields.io/badge/commands-69-orange" alt="69 Commands"/></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/eniz1806/Kodiqa-agent/stargazers"><img src="https://img.shields.io/github/stars/eniz1806/Kodiqa-agent?style=social" alt="Stars"/></a>
-  <a href="https://github.com/eniz1806/Kodiqa-agent/commits/main"><img src="https://img.shields.io/github/last-commit/eniz1806/Kodiqa-agent" alt="Last Commit"/></a>
-  <a href="https://github.com/eniz1806/Kodiqa-agent"><img src="https://img.shields.io/github/languages/code-size/eniz1806/Kodiqa-agent" alt="Code Size"/></a>
+  <a href="https://github.com/Kodiqa-Solutions/Kodiqa-agent/stargazers"><img src="https://img.shields.io/github/stars/Kodiqa-Solutions/Kodiqa-agent?style=social" alt="Stars"/></a>
+  <a href="https://github.com/Kodiqa-Solutions/Kodiqa-agent/commits/main"><img src="https://img.shields.io/github/last-commit/Kodiqa-Solutions/Kodiqa-agent" alt="Last Commit"/></a>
+  <a href="https://github.com/Kodiqa-Solutions/Kodiqa-agent"><img src="https://img.shields.io/github/languages/code-size/Kodiqa-Solutions/Kodiqa-agent" alt="Code Size"/></a>
   <a href="https://pypi.org/project/kodiqa/"><img src="https://img.shields.io/pypi/v/kodiqa?color=blue" alt="PyPI"/></a>
 </p>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/eniz1806/Kodiqa-agent/main/assets/demo.gif" alt="Kodiqa Demo" width="800"/>
+  <img src="https://raw.githubusercontent.com/Kodiqa-Solutions/Kodiqa-agent/main/assets/demo.gif" alt="Kodiqa Demo" width="800"/>
 </p>
 
 <!-- To regenerate the demo GIF: install vhs (https://github.com/charmbracelet/vhs), then run: vhs assets/demo.tape -->
@@ -78,7 +78,7 @@ kodiqa
 
 Or from source:
 ```bash
-git clone https://github.com/eniz1806/Kodiqa-agent.git
+git clone https://github.com/Kodiqa-Solutions/Kodiqa-agent.git
 cd Kodiqa-agent
 pip install .
 kodiqa
